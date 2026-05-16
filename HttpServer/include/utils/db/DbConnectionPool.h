@@ -4,6 +4,7 @@
 #include <condition_variable>
 #include <memory>
 #include <thread>
+#include <atomic>
 #include "DbConnection.h"
 
 namespace http 
@@ -54,6 +55,7 @@ private:
     std::mutex                                mutex_;
     std::condition_variable                   cv_;
     bool                                      initialized_ = false;
+    std::atomic<bool>                         stop_{false}; // 控制检查线程退出
     std::thread                               checkThread_; // 添加检查线程
 };
 

@@ -1,6 +1,7 @@
 #pragma once
 #include "Session.h"
 #include <memory>
+#include <mutex>
 
 namespace http
 {
@@ -16,7 +17,7 @@ public:
     virtual void remove(const std::string& sessionId) = 0;
 };
 
-// 基于内存的会话存储实现
+// 基于内存的会话存储实现（线程安全）
 class MemorySessionStorage : public SessionStorage
 {
 public:
@@ -25,6 +26,7 @@ public:
     void remove(const std::string& sessionId) override;
 private:
     std::unordered_map<std::string, std::shared_ptr<Session>> sessions_;
+    mutable std::mutex mutex_;
 };
 
 } // namespace session

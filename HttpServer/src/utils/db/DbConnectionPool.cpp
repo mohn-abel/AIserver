@@ -39,11 +39,17 @@ void DbConnectionPool::init(const std::string& host,
 DbConnectionPool::DbConnectionPool() 
 {
     checkThread_ = std::thread(&DbConnectionPool::checkConnections, this);
-    checkThread_.detach();
 }
 
 DbConnectionPool::~DbConnectionPool() 
 {
+    // 通知检查线程退出
+    stop_ = true;
+    if (checkThread_.joinable())
+    {
+        checkThread_.join();
+    }
+
     std::lock_guard<std::mutex> lock(mutex_);
     while (!connections_.empty()) 
     {
@@ -75,7 +81,7 @@ std::shared_ptr<DbConnection> DbConnectionPool::getConnection()
     
     try 
     {
-        // 在锁外检查连接
+        // 在锁外检查连接（DbConnection::ping 内部有自己的 mutex 保护）
         if (!conn->ping()) 
         {
             LOG_WARN << "Connection lost, attempting to reconnect...";
@@ -106,52 +112,65 @@ std::shared_ptr<DbConnection> DbConnectionPool::createConnection()
     return std::make_shared<DbConnection>(host_, user_, password_, database_);
 }
 
-// 修改检查连接的函数
+// 连接健康检查线程：从池中取出空闲连接检查，检查完放回
 void DbConnectionPool::checkConnections() 
 {
-    while (true) 
+    while (!stop_) 
     {
+        // 每60秒检查一次
+        for (int i = 0; i < 60 && !stop_; ++i)
+        {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+        if (stop_) break;
+
         try 
         {
-            std::vector<std::shared_ptr<DbConnection>> connsToCheck;
+            size_t poolSize = 0;
             {
-                std::unique_lock<std::mutex> lock(mutex_);
-                if (connections_.empty()) 
-                {
-                    std::this_thread::sleep_for(std::chrono::seconds(1));
-                    continue;
-                }
-                
-                auto temp = connections_;
-                while (!temp.empty()) 
-                {
-                    connsToCheck.push_back(temp.front());
-                    temp.pop();
-                }
+                std::lock_guard<std::mutex> lock(mutex_);
+                poolSize = connections_.size();
             }
-            
-            // 在锁外检查连接
-            for (auto& conn : connsToCheck) 
+
+            // 逐个取出连接检查，再放回
+            for (size_t i = 0; i < poolSize && !stop_; ++i)
             {
+                std::shared_ptr<DbConnection> conn;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    if (connections_.empty())
+                    {
+                        break;
+                    }
+                    conn = connections_.front();
+                    connections_.pop();
+                }
+
+                // 在锁外检查连接（DbConnection 内部有 mutex 保护）
                 if (!conn->ping()) 
                 {
                     try 
                     {
                         conn->reconnect();
+                        LOG_INFO << "Connection reconnected successfully";
                     } 
                     catch (const std::exception& e) 
                     {
                         LOG_ERROR << "Failed to reconnect: " << e.what();
                     }
                 }
+
+                // 放回池中
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    connections_.push(conn);
+                    cv_.notify_one();
+                }
             }
-            
-            std::this_thread::sleep_for(std::chrono::seconds(60));
         } 
         catch (const std::exception& e) 
         {
             LOG_ERROR << "Error in check thread: " << e.what();
-            std::this_thread::sleep_for(std::chrono::seconds(5));
         }
     }
 }
