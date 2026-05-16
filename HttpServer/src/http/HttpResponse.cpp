@@ -46,4 +46,27 @@ void HttpResponse::setStatusLine(const std::string& version,
     statusMessage_ = statusMessage;
 }
 
+// 在 I/O 线程中发送 JSON 响应的便捷方法
+void HttpResponse::sendJsonResponse(const muduo::net::TcpConnectionPtr& conn,
+                                     const std::string& body,
+                                     const std::string& version,
+                                     bool close)
+{
+    HttpResponse resp(close);
+    resp.setVersion(version);
+    resp.setStatusCode(HttpResponse::k200Ok);
+    resp.setStatusMessage("OK");
+    resp.setContentType("application/json");
+    resp.setContentLength(body.size());
+    resp.setBody(body);
+
+    muduo::net::Buffer buf;
+    resp.appendToBuffer(&buf);
+    conn->send(&buf);
+    if (close)
+    {
+        conn->shutdown();
+    }
+}
+
 } // namespace http

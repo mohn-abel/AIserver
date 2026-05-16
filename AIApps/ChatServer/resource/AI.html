@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>AI 聊天助手</title>
+    <style>
+        /* 全局样式 */
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: "Microsoft YaHei", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            height: 100vh;
+            background: linear-gradient(135deg, #1f1c2c, #928dab);
+            color: #fff;
+        }
+
+        /* 左侧会话列表 */
+        .session-list {
+            width: 240px;
+            display: flex;
+            flex-direction: column;
+            background: rgba(0,0,0,0.4);
+            backdrop-filter: blur(6px);
+            border-right: 1px solid rgba(255,255,255,0.2);
+            overflow: hidden;
+        }
+
+        .session-list-header {
+            padding: 15px;
+            text-align: center;
+            font-weight: bold;
+            background: rgba(0,0,0,0.3);
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+        }
+
+        .new-chat-btn {
+            width: 100%;
+            padding: 8px 0;
+            margin-top: 10px;
+            cursor: pointer;
+            background: #00c3ff;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: bold;
+            box-shadow: 0 0 8px #00c3ff;
+            transition: all 0.3s;
+        }
+
+            .new-chat-btn:hover {
+                background: #00e1ff;
+                box-shadow: 0 0 15px #00e1ff;
+                transform: scale(1.05);
+            }
+
+        .session-list ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .session-list li {
+            padding: 12px 15px;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            transition: background 0.2s;
+        }
+
+            .session-list li.active {
+                background: #00c3ff;
+                color: #fff;
+                font-weight: 500;
+                box-shadow: 0 0 8px #00c3ff;
+            }
+
+            .session-list li:hover {
+                background: rgba(0,195,255,0.2);
+            }
+
+        /* 右侧聊天区 */
+        .chat-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .top-bar {
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(6px);
+            border-bottom: 1px solid rgba(255,255,255,0.2);
+            z-index: 1;
+        }
+
+            .top-bar button, .top-bar select {
+                padding: 6px 12px;
+                border: none;
+                border-radius: 8px;
+                cursor: pointer;
+                font-size: 14px;
+                transition: all 0.3s;
+            }
+
+            .top-bar button {
+                background: #00c3ff;
+                color: #fff;
+                font-weight: bold;
+                box-shadow: 0 0 8px #00c3ff;
+            }
+
+                .top-bar button:hover {
+                    background: #00e1ff;
+                    box-shadow: 0 0 15px #00e1ff;
+                    transform: scale(1.05);
+                }
+
+            .top-bar select {
+                background: #fff;
+                color: #111;
+                font-weight: bold;
+            }
+
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: rgba(0,0,0,0.2);
+            backdrop-filter: blur(6px);
+        }
+
+        .message {
+            max-width: 70%;
+            padding: 14px 18px;
+            border-radius: 16px;
+            line-height: 1.5;
+            word-wrap: break-word;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            animation: fadeIn 0.3s ease;
+            position: relative;
+        }
+
+        .user {
+            background: linear-gradient(135deg, #00c3ff, #00e1ff);
+            color: #fff;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .assistant {
+            background: rgba(255,255,255,0.9);
+            color: #111;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+        }
+
+        .input-box {
+            display: flex;
+            padding: 12px 15px;
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(6px);
+            border-top: 1px solid rgba(255,255,255,0.2);
+            gap: 12px;
+        }
+
+        textarea {
+            flex: 1;
+            resize: none;
+            border-radius: 10px;
+            padding: 12px;
+            font-size: 14px;
+            outline: none;
+            border: 1px solid rgba(255,255,255,0.3);
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            transition: all 0.2s;
+        }
+
+            textarea:focus {
+                border-color: #00c3ff;
+                box-shadow: 0 0 8px #00c3ff;
+                background: rgba(255,255,255,0.15);
+            }
+
+        button[type="submit"] {
+            background: #00c3ff;
+            color: #fff;
+            font-weight: bold;
+            box-shadow: 0 0 8px #00c3ff;
+        }
+
+            button[type="submit"]:hover {
+                background: #00e1ff;
+                box-shadow: 0 0 15px #00e1ff;
+                transform: scale(1.05);
+            }
+
+        .tts-btn {
+            padding: 6px 10px;
+            border-radius: 8px;
+            font-size: 12px;
+            cursor: pointer;
+            background: #28a745;
+            color: white;
+            border: none;
+            transition: all 0.2s;
+        }
+
+            .tts-btn:hover {
+                background: #1e7e34;
+            }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.3);
+            border-radius: 4px;
+        }
+
+            ::-webkit-scrollbar-thumb:hover {
+                background: rgba(255,255,255,0.5);
+            }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.0/dist/purify.min.js"></script>
+</head>
+<body>
+    <div class="session-list">
+        <div class="session-list-header">
+            会话列表
+            <button class="new-chat-btn" id="newChatBtn">＋ 新聊天</button>
+        </div>
+        <ul id="sessionList"></ul>
+    </div>
+
+    <div class="chat-section">
+        <div class="top-bar">
+            <button class="back-btn" onclick="window.location.href='/menu'">← 返回</button>
+            <button class="sync-btn" id="sync-history-btn">同步历史数据</button>
+            <label for="modelType">选择模型：</label>
+            <select id="modelType">
+                <option value="aliyun-qwen" selected>阿里百炼 (Qwen-Plus)</option>
+                <option value="aliyun-rag">百炼RAG</option>
+                <option value="aliyun-mcp">阿里百炼MCP</option>
+                <option value="deepseek-v4-pro">DeepSeek V4 Pro</option>
+                
+            </select>
+        </div>
+
+        <div class="chat-container" id="chat-container"></div>
+
+        <form class="input-box" id="chat-form">
+            <textarea id="question" placeholder="请输入你的问题..." required></textarea>
+            <button type="submit">发送</button>
+        </form>
+    </div>
+
+    <script>
+        /* 所有JS逻辑保持原样 */
+        let currentSessionId = null, tempSession = false;
+        const sessions = {};
+        const sessionList = document.getElementById('sessionList');
+        const chatContainer = document.getElementById('chat-container');
+        const chatForm = document.getElementById('chat-form');
+        const questionInput = document.getElementById('question');
+        const syncBtn = document.getElementById('sync-history-btn');
+        const modelTypeSelect = document.getElementById('modelType');
+        const newChatBtn = document.getElementById('newChatBtn');
+
+        async function playTTS(text) {
+            try {
+                const res = await fetch('/chat/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text }) });
+                const data = await res.json();
+                if (data.success && data.url) { const audio = new Audio(data.url); audio.play(); }
+                else alert('[错误] 无法获取语音');
+            } catch (err) { console.error(err); alert('[错误] 请求语音接口失败'); }
+        }
+
+        function appendMessage(role, content) {
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('message', role);
+            const safeHtml = DOMPurify.sanitize(marked.parse(content));
+            const escapedContent = content.replace(/`/g, '\\`').replace(/\$/g, '\\$');
+            msgDiv.innerHTML = `<div style="display:flex; align-items:center; gap:10px;"><div style="flex:1;"><b>${role === 'user' ? '你' : 'AI'}:</b><br>${safeHtml}</div><button class="tts-btn" onclick="playTTS(\`${escapedContent}\`)">🔊</button></div>`;
+            chatContainer.appendChild(msgDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function clearMessages() { chatContainer.innerHTML = ''; }
+
+        function renderSessionList() {
+            sessionList.innerHTML = '';
+            for (let id in sessions) {
+                const li = document.createElement('li');
+                li.textContent = sessions[id].name || `会话 ${id}`;
+                li.dataset.id = id;
+                if (id === currentSessionId) li.classList.add('active');
+                li.onclick = () => switchSession(id);
+                sessionList.appendChild(li);
+            }
+        }
+
+        async function switchSession(id) {
+            currentSessionId = String(id); tempSession = false; clearMessages();
+            if (!sessions[id].messages || sessions[id].messages.length === 0) {
+                try {
+                    const res = await fetch('/chat/history', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: currentSessionId }) });
+                    const data = await res.json();
+                    if (data.success && Array.isArray(data.history)) {
+                        sessions[id].messages = [];
+                        data.history.forEach(item => { sessions[id].messages.push({ role: item.is_user ? 'user' : 'assistant', content: item.content }); });
+                    }
+                } catch (err) { console.error('获取历史失败', err); }
+            }
+            sessions[id].messages.forEach(m => appendMessage(m.role, m.content));
+            renderSessionList();
+        }
+
+        newChatBtn.addEventListener('click', () => {
+            currentSessionId = 'temp';
+            tempSession = true;
+            clearMessages();
+        });
+
+        chatForm.addEventListener('submit', async e => {
+            e.preventDefault();
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            appendMessage('user', question);
+
+            if (tempSession) {
+                try {
+                    const response = await fetch('/chat/send-new-session', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ question, modelType: modelTypeSelect.value })
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        const sessionId = String(data.sessionId);
+                        sessions[sessionId] = {
+                            name: '新会话',
+                            messages: [
+                                { role: 'user', content: question },
+                                { role: 'assistant', content: data.Information }
+                            ]
+                        };
+                        currentSessionId = sessionId;
+                        tempSession = false;
+                        renderSessionList();
+                        appendMessage('assistant', data.Information);
+                    } else {
+                        appendMessage('assistant', '[错误] ' + (data.message || '未知错误'));
+                    }
+                } catch (err) {
+                    console.error(err);
+                    appendMessage('assistant', '[错误] 无法连接到服务器');
+                }
+            } else {
+                sessions[currentSessionId].messages.push({ role: 'user', content: question });
+                try {
+                    const response = await fetch('/chat/send', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ question, modelType: modelTypeSelect.value, sessionId: currentSessionId })
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        appendMessage('assistant', data.Information);
+                        sessions[currentSessionId].messages.push({ role: 'assistant', content: data.Information });
+                    } else {
+                        appendMessage('assistant', '[错误] ' + (data.message || '未知错误'));
+                    }
+                } catch (err) {
+                    console.error(err);
+                    appendMessage('assistant', '[错误] 无法连接到服务器');
+                }
+            }
+
+            questionInput.value = '';
+        });
+
+        syncBtn.addEventListener('click', async () => {
+            if (!currentSessionId || tempSession) {
+                alert('请选择已有会话进行同步');
+                return;
+            }
+            try {
+                const res = await fetch('/chat/history', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId: currentSessionId })
+                });
+                const data = await res.json();
+                if (data.success && Array.isArray(data.history)) {
+                    sessions[currentSessionId].messages = [];
+                    clearMessages();
+                    data.history.forEach(item => {
+                        appendMessage(item.is_user ? 'user' : 'assistant', item.content);
+                        sessions[currentSessionId].messages.push({ role: item.is_user ? 'user' : 'assistant', content: item.content });
+                    });
+                } else {
+                    alert('[错误] 无法获取历史数据');
+                }
+            } catch (err) {
+                console.error(err);
+                alert('[错误] 请求历史数据失败');
+            }
+        });
+
+        async function loadSessions() {
+            try {
+                const res = await fetch('/chat/sessions');
+                const data = await res.json();
+                if (data.success && Array.isArray(data.sessions)) {
+                    data.sessions.forEach(s => {
+                        const sid = String(s.sessionId);
+                        sessions[sid] = { name: s.name || `会话 ${sid}`, messages: [] };
+                    });
+                    renderSessionList();
+                }
+            } catch (err) {
+                console.error('获取会话列表失败', err);
+            }
+        }
+
+        loadSessions();
+    </script>
+</body>
+</html>

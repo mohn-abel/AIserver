@@ -148,9 +148,16 @@ void HttpServer::onRequest(const muduo::net::TcpConnectionPtr &conn, const HttpR
     bool close = ((connection == "close") ||
                   (req.getVersion() == "HTTP/1.0" && connection != "Keep-Alive"));
     HttpResponse response(close);
+    response.setConnection(conn);
 
     // 根据请求报文信息来封装响应报文对象
     httpCallback_(req, &response); // 执行onHttpCallback函数
+
+    // 如果 handler 标记为异步处理（deferred），则不在当前栈帧发送响应
+    if (response.isDeferred())
+    {
+        return;
+    }
 
     // 可以给response设置一个成员，判断是否请求的是文件，如果是文件设置为true，并且存在文件位置在这里send出去。
     muduo::net::Buffer buf;

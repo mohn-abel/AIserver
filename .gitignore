@@ -1,0 +1,9 @@
+build/
+.vscode/
+*.swp
+*.swo
+*.swk
+*.swl
+*.swm
+*.swn
+*.sw[!.]

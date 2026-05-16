@@ -66,6 +66,19 @@ public:
     void setErrorHeader(){}
 
     void appendToBuffer(muduo::net::Buffer* outputBuf) const;
+
+    // ---- 异步响应支持 ----
+    void setConnection(const muduo::net::TcpConnectionPtr& conn) { conn_ = conn; }
+    muduo::net::TcpConnectionPtr getConnection() const { return conn_; }
+
+    void setDeferred() { deferred_ = true; }
+    bool isDeferred() const { return deferred_; }
+
+    // 在 I/O 线程中发送 JSON 响应的便捷方法
+    static void sendJsonResponse(const muduo::net::TcpConnectionPtr& conn,
+                                  const std::string& body,
+                                  const std::string& version = "HTTP/1.1",
+                                  bool close = false);
 private:
     std::string                        httpVersion_; 
     HttpStatusCode                     statusCode_;
@@ -74,6 +87,9 @@ private:
     std::map<std::string, std::string> headers_;
     std::string                        body_;
     bool                               isFile_;
+    // 异步响应支持
+    bool                               deferred_ = false;
+    muduo::net::TcpConnectionPtr       conn_;
 };
 
 } // namespace http
