@@ -5,28 +5,28 @@
       "id": "aliyun-qwen",
       "name": "qwen-plus",
       "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      "api_key": "sk-4d304e1e5a01483ca6f77617b71007d5",
+      "api_key": "",
       "type": "openai"
     },
     {
       "id": "aliyun-rag",
       "name": "",
       "api_url": "https://dashscope.aliyuncs.com/api/v1/apps/8e9577eb10ce46ea9d07924a63ea3a3d/completion",
-      "api_key": "sk-4d304e1e5a01483ca6f77617b71007d5",
+      "api_key": "",
       "type": "rag"
     },
     {
       "id": "aliyun-mcp",
       "name": "qwen-plus",
       "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      "api_key": "sk-4d304e1e5a01483ca6f77617b71007d5",
+      "api_key": "",
       "type": "mcp"
     },
     {
       "id": "deepseek-v4-pro",
       "name": "deepseek-v4-pro",
       "api_url": "https://api.deepseek.com/v1/chat/completions",
-      "api_key": "sk-e9c2a657b18242968f82cc9766520fa5",
+      "api_key": "",
       "type": "openai"
     }
   ],
