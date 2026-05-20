@@ -1,0 +1,42 @@
+{
+  "enabled": true,
+  "backends": {
+    "aliyun-qwen": {
+      "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "api_key": "sk-4d304e1e5a01483ca6f77617b71007d5",
+      "model_name": "qwen-plus"
+    },
+    "deepseek-v4-pro": {
+      "api_url": "https://api.deepseek.com/v1/chat/completions",
+      "api_key": "sk-e9c2a657b18242968f82cc9766520fa5",
+      "model_name": "deepseek-v4-pro"
+    },
+    "aliyun-mcp": {
+      "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "api_key": "sk-4d304e1e5a01483ca6f77617b71007d5",
+      "model_name": "qwen-plus"
+    }
+  },
+  "rate_limit": {
+    "per_backend": {
+      "aliyun-qwen": { "requests_per_second": 10, "burst_size": 5 },
+      "deepseek-v4-pro": { "requests_per_second": 10, "burst_size": 5 },
+      "aliyun-mcp": { "requests_per_second": 10, "burst_size": 5 }
+    },
+    "per_user": { "requests_per_second": 3, "burst_size": 2 }
+  },
+  "circuit_breaker": {
+    "failure_threshold": 5,
+    "recovery_timeout_ms": 30000,
+    "half_open_max_requests": 3
+  },
+  "timeout": {
+    "connect_timeout_ms": 5000,
+    "request_timeout_ms": 60000
+  },
+  "routing": {
+    "aliyun-qwen": { "fallback": ["deepseek-v4-pro"] },
+    "deepseek-v4-pro": { "fallback": ["aliyun-qwen"] },
+    "aliyun-mcp": { "fallback": ["aliyun-qwen", "deepseek-v4-pro"] }
+  }
+}

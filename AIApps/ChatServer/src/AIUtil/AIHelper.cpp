@@ -1,5 +1,6 @@
 #include"../include/AIUtil/AIHelper.h"
 #include"../include/AIUtil/MQManager.h"
+#include"../include/LLMGateway/LLMGateway.h"
 #include <stdexcept>
 #include<chrono>
 
@@ -30,19 +31,14 @@ void AIHelper::addMessage(int userId,const std::string& userName, bool is_user,c
     //消息队列异步入库
     pushMessageToMysql(userId, userName, is_user, userInput, ms, sessionId);
 }
-
+// 回复消息
 void AIHelper::restoreMessage(const std::string& userInput,long long ms) {
     std::lock_guard<std::mutex> lock(mutex_);
     messages.push_back({ userInput,ms });
 }
 
-
-// 发送聊天消息
-std::string AIHelper::chat(int userId,std::string userName, std::string sessionId, std::string userQuestion, std::string modelType) {
-
-    // 整个 chat 操作需要串行化，防止同一 session 并发修改 messages
-    std::lock_guard<std::mutex> lock(mutex_);
-
+// chat内部方法，调用前需持有mutex_
+std::string AIHelper::chatInternal(int userId,std::string userName, std::string sessionId, std::string userQuestion, std::string modelType) {
     //设置策略
     setStrategy(StrategyFactory::instance().create(modelType));
     std::cout << "[AIHelper::chat] received modelType=" << modelType
@@ -55,8 +51,8 @@ std::string AIHelper::chat(int userId,std::string userName, std::string sessionI
         addMessage(userId, userName, true, userQuestion, sessionId);
         json payload = strategy->buildRequest(this->messages);
 
-        //执行请求
-        json response = executeCurl(payload);
+        //执行请求（经过网关）
+        json response = executeCurl(payload, userId, modelType);
         std::string answer = strategy->parseResponse(response);
         addMessage(userId, userName, false, answer, sessionId);
         return answer.empty() ? "[Error] 无法解析响应" : answer;
@@ -68,10 +64,16 @@ std::string AIHelper::chat(int userId,std::string userName, std::string sessionI
     std::cout << "tempUserQuestion is " << tempUserQuestion << std::endl;
     messages.push_back({ tempUserQuestion, 0 });
 
-    json firstReq = strategy->buildRequest(this->messages);
-    json firstResp = executeCurl(firstReq);
-    std::string aiResult = strategy->parseResponse(firstResp);
-    // 用完立即移除提示词
+    json firstResp;
+    std::string aiResult;
+    try {
+        json firstReq = strategy->buildRequest(this->messages);
+        firstResp = executeCurl(firstReq, userId, modelType);
+        aiResult = strategy->parseResponse(firstResp);
+    } catch (...) {
+        messages.pop_back();  // 异常时清理临时消息
+        throw;
+    }
     messages.pop_back();
 
     std::cout << "aiResult is " << aiResult << std::endl;
@@ -112,10 +114,16 @@ std::string AIHelper::chat(int userId,std::string userName, std::string sessionI
     std::cout << "secondPrompt is " << secondPrompt << std::endl;
     messages.push_back({ secondPrompt, 0 });
 
-    json secondReq = strategy->buildRequest(messages);
-    json secondResp = executeCurl(secondReq);
-    std::string finalAnswer = strategy->parseResponse(secondResp);
-    //删除包含提示词的信息
+    json secondResp;
+    std::string finalAnswer;
+    try {
+        json secondReq = strategy->buildRequest(messages);
+        secondResp = executeCurl(secondReq, userId, modelType);
+        finalAnswer = strategy->parseResponse(secondResp);
+    } catch (...) {
+        messages.pop_back();  // 异常时清理临时消息
+        throw;
+    }
     messages.pop_back();
 
     std::cout << "finalAnswer is " << finalAnswer << std::endl;
@@ -123,12 +131,55 @@ std::string AIHelper::chat(int userId,std::string userName, std::string sessionI
     addMessage(userId, userName, true, userQuestion, sessionId);
     addMessage(userId, userName, false, finalAnswer, sessionId);
     return finalAnswer;
-
 }
 
+// 发送聊天消息
+std::string AIHelper::chat(int userId,std::string userName, std::string sessionId, std::string userQuestion, std::string modelType) {
+    // 持有锁调用 chatInternal，确保 messages 和 strategy 的线程安全
+    std::lock_guard<std::mutex> lock(mutex_);
+    return chatInternal(userId, userName, sessionId, userQuestion, modelType);
+}
+
+// 发送聊天消息，启用流式回复
+void AIHelper::chatStreaming(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType, ChunkCallback onChunk){
+    std::lock_guard<std::mutex> lock(mutex_);
+    setStrategy(StrategyFactory::instance().create(modelType));
+    std::cout << "[AIHelper::chatStreaming] received modelType=" << modelType
+                << " -> strategy: model=" << strategy->getModel()
+                << " url=" << strategy->getApiUrl() << std::endl;
+    // MCP不走流式，直接同步chat
+    if (strategy->isMCPModel) {
+        std::string answer = chatInternal(userId, userName, sessionId, userQuestion, modelType);
+        onChunk(answer);
+        return;
+    }
+    // 非MCP流式
+    addMessage(userId, userName, true, userQuestion, sessionId); // 增加一条用户消息
+    json payload = strategy->buildRequest(this->messages);
+    payload["stream"] = true; // 开启流式响应
+    std::string fullresult; // 拼接完整响应
+    // 直接调用网关的流式接口，两次回调，一次是每块数据，一次是完整响应
+    LLMGateway::instance().callStreaming(
+        modelType,
+        payload,
+        strategy->getApiUrl(),
+        strategy->getApiKey(),  
+        userId,
+        [&](const std::string& chunk
+        ) {
+            std::string parsedChunk = strategy->parseStreamChunk(chunk);
+            if(!parsedChunk.empty()) {
+                fullresult += parsedChunk; // 拼接完整响应
+                onChunk(parsedChunk); // 每收到一块就回调一次
+            }
+        }
+    );
+
+    addMessage(userId, userName, false, fullresult, sessionId); // 增加一条AI消息
+}
 // 发送自定义请求体
 json AIHelper::request(const json& payload) {
-    return executeCurl(payload);
+    return executeCurl(payload, 0, strategy->getModel());
 }
 
 std::vector<std::pair<std::string, long long>> AIHelper::GetMessages() {
@@ -137,45 +188,17 @@ std::vector<std::pair<std::string, long long>> AIHelper::GetMessages() {
 }
 
 
-// 内部方法：执行 curl 请求
-json AIHelper::executeCurl(const json& payload) {
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        throw std::runtime_error("Failed to initialize curl");
-    }
+// 内部方法：通过网关执行 HTTP 请求，返回原始 JSON
+json AIHelper::executeCurl(const json& payload, int userId, const std::string& modelType) {
+    std::cout << "[AIHelper] request via gateway, model=" << modelType
+              << " url=" << strategy->getApiUrl() << std::endl;
 
-    std::cout<<"[AIHelper] request URL: "<< strategy->getApiUrl()<<std::endl;
-
-    std::string readBuffer;
-    struct curl_slist* headers = nullptr;
-    std::string authHeader = "Authorization: Bearer " + strategy->getApiKey();
-
-    headers = curl_slist_append(headers, authHeader.c_str());
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-
-    std::string payloadStr = payload.dump();
-
-
-    curl_easy_setopt(curl, CURLOPT_URL, strategy->getApiUrl().c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payloadStr.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
-
-    CURLcode res = curl_easy_perform(curl);
-    curl_slist_free_all(headers);
-    curl_easy_cleanup(curl);
-
-    if (res != CURLE_OK) {
-        throw std::runtime_error("curl_easy_perform() failed: " + std::string(curl_easy_strerror(res)));
-    }
-
-    try {
-        return json::parse(readBuffer);
-    }
-    catch (...) {
-        throw std::runtime_error("Failed to parse JSON response: " + readBuffer);
-    }
+    return LLMGateway::instance().call(
+        modelType,
+        payload,
+        strategy->getApiUrl(),
+        strategy->getApiKey(),
+        userId);
 }
 
 // curl 回调函数，把返回的数据写到 string buffer

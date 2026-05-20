@@ -1,68 +1,87 @@
 <!DOCTYPE html>
 <html lang="zh">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>404 Not Found</title>
-<style>
-    body {
-        margin: 0;
-        padding: 0;
-        font-family: "Microsoft YaHei", Arial, sans-serif;
-        background-color: #ffffff;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 100vh;
-        color: #333;
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>404 Not Found</title>
+    <style>
+        :root {
+            --bg-primary: #0f0f1a;
+            --accent: #6c5ce7;
+            --accent-glow: rgba(108, 92, 231, 0.4);
+            --text-primary: #e8e8f0;
+            --text-secondary: #a0a0b8;
+            --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
 
-    .container {
-        text-align: center;
-        padding: 30px 40px;
-        background: #f9f9f9;
-        border-radius: 15px;
-        box-shadow: 0 8px 20px rgba(0,0,0,0.1);
-    }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    h1 {
-        font-size: 72px;
-        margin: 0;
-        background: linear-gradient(to right, #007bff, #00c6ff);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
+        body {
+            font-family: "Inter", "Microsoft YaHei", system-ui, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background: var(--bg-primary);
+            background-image: radial-gradient(ellipse at 50% 50%, rgba(108,92,231,0.1) 0%, transparent 60%);
+            color: var(--text-primary);
+        }
 
-    p {
-        font-size: 20px;
-        margin: 20px 0;
-        color: #555;
-    }
+        .container {
+            text-align: center;
+            padding: 48px 56px;
+            background: rgba(26, 26, 46, 0.7);
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(16px);
+            box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+            animation: fadeUp 0.5s ease;
+        }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
 
-    .btn {
-        display: inline-block;
-        padding: 12px 25px;
-        font-size: 16px;
-        background-color: #007bff;
-        color: white;
-        border: none;
-        border-radius: 10px;
-        cursor: pointer;
-        font-weight: bold;
-        text-decoration: none;
-        transition: all 0.3s;
-    }
-
-    .btn:hover {
-        background-color: #0056b3;
-        transform: scale(1.05);
-    }
-</style>
+        h1 {
+            font-size: 96px;
+            font-weight: 800;
+            margin: 0;
+            line-height: 1;
+            background: linear-gradient(135deg, #6c5ce7, #a855f7, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        p {
+            font-size: 18px;
+            margin: 18px 0 32px;
+            color: var(--text-secondary);
+        }
+        .btn {
+            display: inline-block;
+            padding: 12px 28px;
+            font-size: 15px;
+            font-weight: 700;
+            background: var(--accent);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            text-decoration: none;
+            transition: var(--transition);
+            box-shadow: 0 4px 16px var(--accent-glow);
+        }
+        .btn:hover {
+            background: #7c6ff7;
+            box-shadow: 0 6px 24px var(--accent-glow);
+            transform: translateY(-1px);
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <h1>404</h1>
-        <p>抱歉，您访问的页面不存在！</p>
+        <p>抱歉，您访问的页面不存在</p>
         <a href="/menu" class="btn">返回首页</a>
     </div>
 </body>

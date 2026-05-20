@@ -8,6 +8,8 @@
 
 #include"../include/ChatServer.h"
 #include"../include/AIUtil/AIFactory.h"
+#include"../include/LLMGateway/LLMGateway.h"
+#include"../include/LLMGateway/GatewayConfig.h"
 
 const std::string RABBITMQ_HOST = "localhost"; // 本地rabbitmq服务器
 const std::string QUEUE_NAME = "sql_queue"; // 监听的消息队列
@@ -45,6 +47,16 @@ int main(int argc, char* argv[]) {
     server.setThreadNum(4);
     // 加载 LLM 模型配置（在服务器启动前注册所有可用模型）
     StrategyFactory::instance().loadFromConfig("../AIApps/ChatServer/resource/model_config.json");
+
+    // 加载网关配置并初始化
+    {
+        GatewayConfig gwConfig;
+        if (gwConfig.loadFromFile("../AIApps/ChatServer/resource/gateway_config.json")) {
+            LLMGateway::instance().init(gwConfig);
+        } else {
+            std::cout << "[Main] Gateway config not loaded, gateway disabled" << std::endl;
+        }
+    }
 
     //һҪ˯߲ChatServer캯гʼֿ
     std::this_thread::sleep_for(std::chrono::seconds(2));

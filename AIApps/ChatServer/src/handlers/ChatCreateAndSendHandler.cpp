@@ -28,12 +28,13 @@ void ChatCreateAndSendHandler::handle(const http::HttpRequest& req, http::HttpRe
 
         std::string userQuestion;
         std::string modelType;
+        bool stream;
 
         auto body = req.getBody();
         if (!body.empty()) {
             auto j = json::parse(body);
             if (j.contains("question")) userQuestion = j["question"];
-
+            stream = j.contains("stream") ? j["stream"].get<bool>() : false;
 
             modelType = j.contains("modelType") ? j["modelType"].get<std::string>() : StrategyFactory::instance().getDefaultModel();
         }
@@ -47,7 +48,7 @@ void ChatCreateAndSendHandler::handle(const http::HttpRequest& req, http::HttpRe
         resp->setDeferred();
         auto conn = resp->getConnection();
 
-        server_->getBusinessPool()->enqueue([this, conn, userId, username, sessionId, userQuestion, modelType]() {
+        server_->getBusinessPool()->enqueue([this, conn, userId, username, sessionId, userQuestion, modelType, stream]() {
             try {
                 std::shared_ptr<AIHelper> AIHelperPtr;
                 {
@@ -64,25 +65,70 @@ void ChatCreateAndSendHandler::handle(const http::HttpRequest& req, http::HttpRe
                     }
                     AIHelperPtr = userSessions[sessionId];
                 }
+                if(stream){
+                    http::HttpResponse::sendSSEHeaders(conn);
+                    // 先发 sessionId，客户端用它在本地建立会话
+                    json sessionInfo;
+                    sessionInfo["sessionId"] = sessionId;
+                    http::HttpResponse::sendSSEChunk(conn, sessionInfo.dump());
+                    AIHelperPtr->chatStreaming(userId, username, sessionId, userQuestion, modelType, [conn](const std::string& chunk){
+                        try{
+                            if(!chunk.empty()){
+                                json chunkResp;
+                                chunkResp["id"] = "chatcmpl-stream";
+                                chunkResp["object"] = "chat.completion.chunk";
+                                chunkResp["choices"] = json::array({{
+                                    {"index", 0},
+                                    {"delta", {{"content", chunk}}},
+                                }}); // 模拟 OpenAI 的流式响应格式
+                                std::string chunkBody = chunkResp.dump();
 
-                std::string aiInformation = AIHelperPtr->chat(userId, username, sessionId, userQuestion, modelType);
-                json successResp;
-                successResp["success"] = true;
-                successResp["Information"] = aiInformation;
-                successResp["sessionId"] = sessionId;
+                                conn->getLoop()->runInLoop([conn, chunkBody]() {
+                                    http::HttpResponse::sendSSEChunk(conn, chunkBody);
+                                });
+                            }
+                        }catch(...){
+                            json errorChunkResp;
+                            errorChunkResp["error"] = {{"message", "Error in streaming response"}};
+                            std::string errorChunkBody = errorChunkResp.dump();
 
-                std::string successBody = successResp.dump(4);
+                            conn->getLoop()->runInLoop([conn, errorChunkBody]() {
+                                http::HttpResponse::sendSSEError(conn, errorChunkBody);
+                            });
+                        }
+                    });
+                    conn->getLoop()->runInLoop([conn]() {
+                        http::HttpResponse::sendSSEEnd(conn);
+                    });
 
-                // 回到I/O线程发送响应
-                conn->getLoop()->runInLoop([conn, successBody]() {
-                    http::HttpResponse::sendJsonResponse(conn, successBody, "HTTP/1.1", false);
-                });
+                }else{
+                    std::string aiInformation=AIHelperPtr->chat(userId, username,sessionId, userQuestion, modelType);
+                    json successResp;
+                    successResp["success"] = true;
+                    successResp["Information"] = aiInformation;
+                    std::string successBody = successResp.dump(4);
+
+                    // 在 muduo I/O 线程中发送响应
+                    conn->getLoop()->runInLoop([conn, successBody]() {
+                        http::HttpResponse::sendJsonResponse(conn, successBody, "HTTP/1.1", false);
+                    });
+                }
             } catch (const std::exception& e) {
                 LOG_ERROR << "ChatCreateAndSendHandler async error: " << e.what();
-                std::string failureBody = json{{"status", "error"}, {"message", e.what()}}.dump(4);
-                conn->getLoop()->runInLoop([conn, failureBody]() {
-                    http::HttpResponse::sendJsonResponse(conn, failureBody, "HTTP/1.1", true);
-                });
+                if(stream){
+                    json errorChunkResp;
+                    errorChunkResp["error"] = {{"message", e.what()}};
+                    std::string errorChunkBody = errorChunkResp.dump();
+
+                    conn->getLoop()->runInLoop([conn, errorChunkBody]() {
+                        http::HttpResponse::sendSSEError(conn, errorChunkBody);
+                    });
+                }else{
+                    std::string failureBody = json{{"status", "error"}, {"message", e.what()}}.dump(4);
+                    conn->getLoop()->runInLoop([conn, failureBody]() {
+                        http::HttpResponse::sendJsonResponse(conn, failureBody, "HTTP/1.1", true);
+                    });
+                }
             }
         });
 

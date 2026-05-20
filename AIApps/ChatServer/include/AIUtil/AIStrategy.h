@@ -19,7 +19,7 @@ public:
 
     virtual json buildRequest(const std::vector<std::pair<std::string, long long>>& messages) const = 0;
     virtual std::string parseResponse(const json& response) const = 0;
-
+    virtual std::string parseStreamChunk(const std::string& jsonStr) const = 0;
     bool isMCPModel = false;
 };
 
@@ -59,6 +59,21 @@ public:
             return response["choices"][0]["message"]["content"];
         }
         return {};
+    }
+
+    std::string parseStreamChunk(const std::string& jsonStr) const override {
+        try{
+            auto j = json::parse(jsonStr);
+            if(j.contains("choices") && !j["choices"].empty()) {
+                auto choice = j["choices"][0];
+                if (choice.contains("delta") && choice["delta"].contains("content")) {
+                    return choice["delta"]["content"];
+                }
+            }
+            return {};
+        }catch(...){
+            return {};
+        }
     }
 
 private:
@@ -102,6 +117,18 @@ public:
             return "[RAG Error] " + response["message"].get<std::string>();
         }
         return "[RAG Error] Unexpected response: " + response.dump();
+    }
+
+    std::string parseStreamChunk(const std::string& jsonStr) const override {
+        try{
+            auto j = json::parse(jsonStr);
+            if(j.contains("output") && j["output"].contains("text")) {
+                return j["output"]["text"];
+            }
+            return {};
+        }catch(...){
+            return {};
+        }
     }
 
 private:

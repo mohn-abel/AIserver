@@ -69,4 +69,36 @@ void HttpResponse::sendJsonResponse(const muduo::net::TcpConnectionPtr& conn,
     }
 }
 
-} // namespace http
+void HttpResponse::sendSSEHeaders(const muduo::net::TcpConnectionPtr& conn) {
+    if(!conn || !conn->connected()) return;
+
+    HttpResponse resp(false);
+    resp.setVersion("HTTP/1.1");
+    resp.setStatusCode(HttpResponse::k200Ok);
+    resp.setStatusMessage("OK");
+    resp.setContentType("text/event-stream");
+    resp.addHeader("Cache-Control", "no-cache");
+
+    muduo::net::Buffer buf;
+    resp.appendToBuffer(&buf);
+    conn->send(&buf);
+}
+
+void HttpResponse::sendSSEChunk(const muduo::net::TcpConnectionPtr& conn, const std::string& data) {
+    std::string chunk = "data: " + data + "\n\n";
+    conn->send(chunk);
+}
+
+void HttpResponse::sendSSEError(const muduo::net::TcpConnectionPtr& conn, const std::string& errorJson) {
+    std::string error = "data: " + errorJson + "\n\n";
+    conn->send(error);
+    conn->shutdown();
+}
+
+void HttpResponse::sendSSEEnd(const muduo::net::TcpConnectionPtr& conn) {
+    std::string end = "data: [DONE]\n\n";
+    conn->send(end);
+    conn->shutdown();
+}
+}
+// namespace http

@@ -36,7 +36,7 @@ class AIMenuHandler;
 class AIUploadHandler;
 class AIUploadSendHandler;
 
-//ڶ׶
+//
 class ChatCreateAndSendHandler;
 class ChatSessionsHandler;
 class ChatSpeechHandler;
@@ -53,7 +53,7 @@ public:
 private:
 	friend class ChatLoginHandler;
 	friend class ChatRegisterHandler;
-	friend  ChatLogoutHandler;
+	friend class ChatLogoutHandler;
 	friend class ChatHandler;
 	friend class ChatEntryHandler;
 	friend class ChatSendHandler;
@@ -61,6 +61,7 @@ private:
 	friend class AIUploadHandler;
 	friend class AIUploadSendHandler;
 	friend class ChatHistoryHandler;
+	friend class ChatDeleteSessionHandler;
 
 	friend class ChatCreateAndSendHandler;
 	friend class ChatSessionsHandler;
@@ -111,6 +112,7 @@ private:
 	std::mutex mutexForSessionsId;
 
 public:
+	// 业务池接口
 	http::utils::ThreadPool* getBusinessPool() const { return businessPool_.get(); }
 
 };

@@ -9,7 +9,7 @@
 #include"../include/handlers/AIUploadHandler.h"
 #include"../include/handlers/ChatHistoryHandler.h"
 
-
+#include"../include/handlers/ChatDeleteSessionHandler.h"
 #include"../include/handlers/ChatCreateAndSendHandler.h"
 #include"../include/handlers/ChatSessionsHandler.h"
 #include"../include/handlers/ChatSpeechHandler.h"
@@ -141,7 +141,7 @@ void ChatServer::initializeRouter() {
     httpServer_.Post("/upload/send", std::make_shared<AIUploadSendHandler>(this));
     
     httpServer_.Post("/chat/history", std::make_shared<ChatHistoryHandler>(this));
-
+    httpServer_.Post("/chat/delete-session", std::make_shared<ChatDeleteSessionHandler>(this));
     
     httpServer_.Post("/chat/send-new-session", std::make_shared<ChatCreateAndSendHandler>(this));
     httpServer_.Get("/chat/sessions", std::make_shared<ChatSessionsHandler>(this));
