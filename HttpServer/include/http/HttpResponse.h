@@ -79,6 +79,14 @@ public:
                                   const std::string& body,
                                   const std::string& version = "HTTP/1.1",
                                   bool close = false);
+    
+    // 流式响应的辅助方法
+    static void sendSSEHeaders(const muduo::net::TcpConnectionPtr& conn);
+    static void sendSSEChunk(const muduo::net::TcpConnectionPtr& conn, const std::string& data);
+    static void sendSSEError(const muduo::net::TcpConnectionPtr& conn, const std::string& errorJson);
+    static void sendSSEEnd(const muduo::net::TcpConnectionPtr& conn);
+
+    
 private:
     std::string                        httpVersion_; 
     HttpStatusCode                     statusCode_;

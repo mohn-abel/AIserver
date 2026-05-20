@@ -1,39 +1,46 @@
 <!DOCTYPE html>
-<html lang="en">
-
+<html lang="zh">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>欢迎来到AI助手界面</title>
+    <title>AI 助手</title>
     <style>
-        /* 全局样式 */
+        :root {
+            --bg-primary: #0f0f1a;
+            --accent: #6c5ce7;
+            --accent-glow: rgba(108, 92, 231, 0.4);
+            --text-primary: #e8e8f0;
+            --text-secondary: #a0a0b8;
+            --border: rgba(255, 255, 255, 0.08);
+            --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
         body {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: "Microsoft YaHei", Arial, sans-serif;
-            color: #fff;
+            font-family: "Inter", "Microsoft YaHei", system-ui, sans-serif;
+            color: var(--text-primary);
             overflow: hidden;
-            background: radial-gradient(ellipse at bottom, #1b2735 0%, #090a0f 100%);
+            background: var(--bg-primary);
+            height: 100vh;
         }
 
         /* 星空背景 */
-        .stars {
+        .star {
+            position: absolute;
             width: 2px;
             height: 2px;
-            background: white;
+            background: #fff;
             border-radius: 50%;
-            position: absolute;
-            animation: twinkling 3s infinite ease-in-out;
+            animation: twinkle 3s infinite ease-in-out;
         }
-
-        @keyframes twinkling {
-            0%, 100% { opacity: 0.2; }
+        @keyframes twinkle {
+            0%, 100% { opacity: 0.15; }
             50% { opacity: 1; }
         }
 
-        /* 加载动画容器 */
-        #loading-container {
+        /* 加载画面 */
+        #loading-screen {
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -41,195 +48,195 @@
             height: 100vh;
             text-align: center;
         }
-
-        /* 加载标题 */
-        #loading-title {
-            font-size: 2.5em;
-            margin-bottom: 30px;
-            color: #00c3ff;
-            text-shadow: 0 0 10px #00c3ff, 0 0 20px #008bff, 0 0 30px #00e1ff;
-            letter-spacing: 3px;
+        #loading-screen h1 {
+            font-size: 2.2em;
+            margin-bottom: 28px;
+            background: linear-gradient(135deg, #6c5ce7, #a855f7, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
             animation: pulse 2s infinite;
+            letter-spacing: 2px;
         }
-
         @keyframes pulse {
-            0%, 100% { text-shadow: 0 0 10px #00c3ff, 0 0 20px #008bff; }
-            50% { text-shadow: 0 0 20px #00e1ff, 0 0 40px #00ffff; }
+            0%, 100% { filter: brightness(1); }
+            50% { filter: brightness(1.4); }
         }
 
-        /* 进度条 */
-        .progress-bar {
-            width: 320px;
-            height: 22px;
-            background: #222;
-            border-radius: 12px;
+        .progress-track {
+            width: 300px;
+            height: 6px;
+            background: rgba(255,255,255,0.08);
+            border-radius: 3px;
             overflow: hidden;
-            box-shadow: 0 0 15px #00c3ff;
         }
-
-        .progress-bar-inner {
+        .progress-fill {
             height: 100%;
-            background: linear-gradient(90deg, #00c3ff, #00e1ff, #00fff7);
+            background: var(--accent);
+            border-radius: 3px;
             width: 0;
-            transition: width 0.3s ease;
+            transition: width 0.25s ease;
+            box-shadow: 0 0 12px var(--accent-glow);
+        }
+        #loading-screen p {
+            margin-top: 18px;
+            font-size: 14px;
+            color: var(--text-secondary);
         }
 
-        /* 加载提示文字 */
-        #loading-text {
-            margin-top: 20px;
-            font-size: 1.2em;
-            color: #ccc;
-        }
-
-        /* 菜单页面样式 */
-        #menu-container {
+        /* 菜单画面 */
+        #menu-screen {
             display: none;
             text-align: center;
-            padding: 60px 20px;
-            animation: fadeIn 1s ease forwards;
+            padding: 80px 20px 0;
+            animation: fadeUp 0.8s ease forwards;
         }
-
-        @keyframes fadeIn {
+        @keyframes fadeUp {
             from { opacity: 0; transform: translateY(30px); }
             to { opacity: 1; transform: translateY(0); }
         }
-
-        h1 {
-            font-size: 2.8em;
-            margin-bottom: 30px;
-            color: #00e1ff;
-            text-shadow: 0 0 15px #00c3ff, 0 0 30px #008bff;
+        #menu-screen h1 {
+            font-size: 2.4em;
+            margin-bottom: 14px;
+            background: linear-gradient(135deg, #6c5ce7, #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
-
-        .menu-option {
-            margin: 15px 0;
-            font-size: 1.6em;
-            padding: 12px 25px;
-            border-radius: 10px;
-            display: inline-block;
-            background: rgba(0, 195, 255, 0.1);
-            border: 1px solid #00c3ff;
-            color: #fff;
+        .subtitle {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 40px;
+        }
+        .divider {
+            margin: 0 auto 36px;
+            width: 60%;
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+        }
+        .menu-item {
+            display: block;
+            margin: 14px auto;
+            padding: 16px 28px;
+            width: 380px;
+            max-width: 90vw;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: rgba(255,255,255,0.03);
+            color: var(--text-primary);
             cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 0 8px #00c3ff;
+            transition: var(--transition);
+            backdrop-filter: blur(8px);
         }
-
-        .menu-option:hover {
-            background: rgba(0, 225, 255, 0.2);
-            color: #00ffff;
-            text-shadow: 0 0 10px #00e1ff;
-            transform: scale(1.05);
-            box-shadow: 0 0 15px #00e1ff;
+        .menu-item:hover {
+            border-color: var(--accent);
+            background: rgba(108,92,231,0.12);
+            box-shadow: 0 0 20px var(--accent-glow);
+            transform: translateY(-2px);
         }
-
-        .menu-border {
-            margin: 20px auto;
-            width: 85%;
-            height: 2px;
-            background: #00c3ff;
-            box-shadow: 0 0 10px #00c3ff;
+        .menu-item.logout {
+            border-color: rgba(239,68,68,0.3);
+            color: #ef4444;
+            margin-top: 32px;
+        }
+        .menu-item.logout:hover {
+            border-color: #ef4444;
+            background: rgba(239,68,68,0.1);
+            box-shadow: 0 0 16px rgba(239,68,68,0.3);
         }
     </style>
 </head>
-
 <body>
-    <!-- 星空背景（随机星星） -->
+    <!-- 星空 -->
     <script>
-        for (let i = 0; i < 80; i++) {
-            let star = document.createElement("div");
-            star.className = "stars";
-            star.style.top = Math.random() * window.innerHeight + "px";
-            star.style.left = Math.random() * window.innerWidth + "px";
-            star.style.animationDuration = 2 + Math.random() * 3 + "s";
-            document.body.appendChild(star);
+        for (let i = 0; i < 100; i++) {
+            const s = document.createElement('div');
+            s.className = 'star';
+            s.style.top  = Math.random() * window.innerHeight + 'px';
+            s.style.left = Math.random() * window.innerWidth + 'px';
+            s.style.animationDuration = (2 + Math.random() * 4) + 's';
+            s.style.animationDelay = Math.random() * 3 + 's';
+            document.body.appendChild(s);
         }
     </script>
 
-    <!-- 加载动画 -->
-    <div id="loading-container">
-        <div id="loading-title">AI 助手 启动中...</div>
-        <div class="progress-bar">
-            <div class="progress-bar-inner"></div>
+    <!-- 加载 -->
+    <div id="loading-screen">
+        <h1>AI 助手 启动中</h1>
+        <div class="progress-track">
+            <div class="progress-fill" id="progressFill"></div>
         </div>
-        <div id="loading-text">系统正在初始化，请稍候...</div>
+        <p>系统正在初始化，请稍候...</p>
     </div>
 
-    <!-- 菜单页面 -->
-    <div id="menu-container">
-        <h1>✨ 欢迎来到 AI 助手 ✨</h1>
-        <div class="menu-border"></div>
-        <div class="menu-option" id="chat-service">[1] 进入 AI 聊天助手</div>
-        <div class="menu-option" id="image-service">[2] 进入 AI 图像识别助手</div>
-        <div class="menu-option" id="logout">[0] 退出登录</div>
+    <!-- 菜单 -->
+    <div id="menu-screen">
+        <h1>欢迎使用 AI 助手</h1>
+        <p class="subtitle">选择一个功能开始体验</p>
+        <div class="divider"></div>
+        <div class="menu-item" id="chat-service">AI 智能聊天</div>
+        <div class="menu-item" id="image-service">AI 图像识别</div>
+        <div class="menu-item logout" id="logout">退出登录</div>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function () {
-            const progressBar = document.querySelector('.progress-bar-inner');
-            const loadingContainer = document.getElementById('loading-container');
-            const menuContainer = document.getElementById('menu-container');
-
-            // 动态进度条动画
-            let percent = 0;
-            let interval = setInterval(() => {
-                percent += 10;
-                progressBar.style.width = percent + "%";
-                if (percent >= 100) {
-                    clearInterval(interval);
+        document.addEventListener('DOMContentLoaded', () => {
+            const fill = document.getElementById('progressFill');
+            const loading = document.getElementById('loading-screen');
+            const menu = document.getElementById('menu-screen');
+            let pct = 0;
+            const timer = setInterval(() => {
+                pct += 8;
+                fill.style.width = pct + '%';
+                if (pct >= 100) {
+                    clearInterval(timer);
                     setTimeout(() => {
-                        loadingContainer.style.display = 'none';
-                        menuContainer.style.display = 'block';
-                    }, 300);
+                        loading.style.display = 'none';
+                        menu.style.display = 'block';
+                    }, 350);
                 }
             }, 200);
         });
 
-        // 进入AI服务
-        function loadService(path, errorMsg) {
-            fetch(path, { method: 'GET', headers: { 'Accept': 'text/html' } })
-                .then(res => res.text())
+        function navigate(path, errMsg) {
+            fetch(path, { headers: { 'Accept': 'text/html' } })
+                .then(r => r.text())
                 .then(html => { document.open(); document.write(html); document.close(); })
-                .catch(() => alert(errorMsg));
+                .catch(() => alert(errMsg));
         }
 
-        document.getElementById('chat-service').addEventListener('click', () => loadService('/chat', '进入AI聊天服务异常！'));
-        document.getElementById('image-service').addEventListener('click', () => loadService('/upload', '进入AI图像识别服务异常！'));
-        document.getElementById('logout').addEventListener('click', () => {
+        document.getElementById('chat-service').addEventListener('click',  () => navigate('/chat',   '进入聊天服务失败'));
+        document.getElementById('image-service').addEventListener('click', () => navigate('/upload', '进入图像识别服务失败'));
+
+        document.getElementById('logout').addEventListener('click', async () => {
             const userId = sessionStorage.getItem('userId');
-            fetch('/user/logout', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ userId: userId, type: 'manual', gameType: 0 })
-            })
-                .then(res => {
-                    if (!res.ok) throw new Error('Logout failed');
-                    return fetch('/', { method: 'GET', headers: { 'Accept': 'text/html' } });
-                })
-                .then(res => res.text())
-                .then(html => {
-                    sessionStorage.clear();
-                    document.open();
-                    document.write(html);
-                    document.close();
-                })
-                .catch(() => alert('退出登录失败！'));
+            try {
+                const r = await fetch('/user/logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ userId, type: 'manual', gameType: 0 })
+                });
+                if (!r.ok) throw new Error('fail');
+                sessionStorage.clear();
+                const hr = await fetch('/');
+                const html = await hr.text();
+                document.open(); document.write(html); document.close();
+            } catch { alert('退出登录失败'); }
         });
 
-        // 页面刷新/关闭时自动登出
-        window.addEventListener('beforeunload', function () {
+        window.addEventListener('beforeunload', () => {
             const userId = sessionStorage.getItem('userId');
             if (userId) {
-                const data = new Blob([JSON.stringify({ userId: userId, type: 'refresh', gameType: 0 })],
-                    { type: 'application/json' });
-                navigator.sendBeacon('/user/logout', data);
+                navigator.sendBeacon('/user/logout',
+                    new Blob([JSON.stringify({ userId, type: 'refresh', gameType: 0 })],
+                    { type: 'application/json' }));
             }
         });
 
-        // 页面加载时用户检查
-        window.addEventListener('load', function () {
-            const userId = sessionStorage.getItem('userId');
-            if (!userId) {
+        window.addEventListener('load', () => {
+            if (!sessionStorage.getItem('userId')) {
                 window.location.href = '/entry';
             }
         });

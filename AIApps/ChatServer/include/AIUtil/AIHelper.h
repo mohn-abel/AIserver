@@ -14,6 +14,7 @@
 #include"AIConfig.h"
 #include"AIToolRegistry.h"
 
+using ChunkCallback = std::function<void(const std::string& chunk)>;
 
 // 这边封装curl去访问对阿里的模型
 class AIHelper {
@@ -35,6 +36,9 @@ public:
     // messages: [{"role":"system","content":"..."}, {"role":"user","content":"..."}]
     std::string chat(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType);
 
+    // 发送流式聊条消息
+    void chatStreaming(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType, ChunkCallback onChunk);
+
     // 可选：发送自定义请求体
     json request(const json& payload);
 
@@ -46,10 +50,13 @@ private:
     //todo: 
     void pushMessageToMysql(int userId, const std::string& userName, bool is_user, const std::string& userInput, long long ms,std::string sessionId);
 
-    // 内部方法：执行curl请求，返回原始JSON
-    json executeCurl(const json& payload);
+    // 内部方法：经过网关执行 HTTP 请求，返回原始 JSON
+    json executeCurl(const json& payload, int userId, const std::string& modelType);
     // curl 回调函数，把返回的数据写到 string buffer
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);
+
+    // chat内部方法
+    std::string chatInternal(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType);
 
 private:
 
