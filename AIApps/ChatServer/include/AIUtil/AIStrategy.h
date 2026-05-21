@@ -20,7 +20,8 @@ public:
     virtual json buildRequest(const std::vector<std::pair<std::string, long long>>& messages) const = 0;
     virtual std::string parseResponse(const json& response) const = 0;
     virtual std::string parseStreamChunk(const std::string& jsonStr) const = 0;
-    bool isMCPModel = false;
+    virtual bool supportTools() const {return false;}
+    virtual int getMaxContext() const { return 0; } 
 };
 
 // 通用策略类：支持所有 OpenAI 兼容 API（DeepSeek、OpenAI、Ollama、vLLM 等）
@@ -30,10 +31,10 @@ public:
     GenericAIStrategy(const std::string& modelName,
                       const std::string& apiUrl,
                       const std::string& apiKey,
-                      bool isMcp = false)
-        : modelName_(modelName), apiUrl_(apiUrl), apiKey_(apiKey)
+                      int maxContext)
+        : modelName_(modelName), apiUrl_(apiUrl), apiKey_(apiKey), maxContext_(maxContext)
     {
-        isMCPModel = isMcp;
+        
     }
 
     std::string getApiUrl() const override { return apiUrl_; }
@@ -75,11 +76,20 @@ public:
             return {};
         }
     }
+    
+    bool supportTools() const override {
+        return true;
+    }
+
+    int getMaxContext() const override {
+        return maxContext_; // 默认上下文长度限制，实际值可从配置文件读取
+    }
 
 private:
     std::string modelName_;
     std::string apiUrl_;
     std::string apiKey_;
+    int maxContext_;
 };
 
 // RAG 策略类：阿里云 DashScope RAG 专用格式
@@ -88,10 +98,11 @@ class AliyunRAGStrategy : public AIStrategy {
 public:
     AliyunRAGStrategy(const std::string& modelName,
                       const std::string& apiUrl,
-                      const std::string& apiKey)
-        : modelName_(modelName), apiUrl_(apiUrl), apiKey_(apiKey)
+                      const std::string& apiKey,
+                      int maxContext)
+        : modelName_(modelName), apiUrl_(apiUrl), apiKey_(apiKey), maxContext_(maxContext)
     {
-        isMCPModel = false;
+        
     }
 
     std::string getApiUrl() const override { return apiUrl_; }
@@ -130,9 +141,14 @@ public:
             return {};
         }
     }
+    
+    int getMaxContext() const override {
+        return maxContext_; // 默认上下文长度限制，实际值可从配置文件读取
+    }
 
 private:
     std::string modelName_;
     std::string apiUrl_;
     std::string apiKey_;
+    int maxContext_;
 };
