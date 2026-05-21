@@ -58,6 +58,8 @@ private:
     // chat内部方法
     std::string chatInternal(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType);
 
+    // 上下文窗口裁剪
+    json buildRequestWithContext();
 private:
 
     /*

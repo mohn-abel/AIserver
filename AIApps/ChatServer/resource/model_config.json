@@ -5,35 +5,25 @@
       "id": "aliyun-qwen",
       "name": "qwen-plus",
       "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      "api_key": "",
-      "type": "openai"
+      "api_key": "sk-4d304e1e5a01483ca6f77617b71007d5",
+      "type": "mcp",
+      "max_context": 20
     },
     {
       "id": "aliyun-rag",
       "name": "",
       "api_url": "https://dashscope.aliyuncs.com/api/v1/apps/8e9577eb10ce46ea9d07924a63ea3a3d/completion",
-      "api_key": "",
-      "type": "rag"
-    },
-    {
-      "id": "aliyun-mcp",
-      "name": "qwen-plus",
-      "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      "api_key": "",
-      "type": "mcp"
+      "api_key": "sk-4d304e1e5a01483ca6f77617b71007d5",
+      "type": "rag",
+      "max_context": 20
     },
     {
       "id": "deepseek-v4-pro",
       "name": "deepseek-v4-pro",
       "api_url": "https://api.deepseek.com/v1/chat/completions",
-      "api_key": "",
-      "type": "openai"
+      "api_key": "sk-7617d24edf764834a0d97b8f910df69e",
+      "type": "mcp",
+      "max_context": 20
     }
-  ],
-  "aliases": {
-    "1": "aliyun-qwen",
-    "2": "aliyun-rag",
-    "3": "aliyun-mcp",
-    "4": "deepseek-v4-pro"
-  }
+  ]
 }

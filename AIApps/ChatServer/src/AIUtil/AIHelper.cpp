@@ -46,10 +46,10 @@ std::string AIHelper::chatInternal(int userId,std::string userName, std::string 
               << " url=" << strategy->getApiUrl() << std::endl;
 
     
-    if (false == strategy->isMCPModel) {
+    if (false == strategy->supportTools()) {
 
         addMessage(userId, userName, true, userQuestion, sessionId);
-        json payload = strategy->buildRequest(this->messages);
+        json payload = buildRequestWithContext();
 
         //执行请求（经过网关）
         json response = executeCurl(payload, userId, modelType);
@@ -67,7 +67,7 @@ std::string AIHelper::chatInternal(int userId,std::string userName, std::string 
     json firstResp;
     std::string aiResult;
     try {
-        json firstReq = strategy->buildRequest(this->messages);
+        json firstReq = buildRequestWithContext();
         firstResp = executeCurl(firstReq, userId, modelType);
         aiResult = strategy->parseResponse(firstResp);
     } catch (...) {
@@ -117,7 +117,7 @@ std::string AIHelper::chatInternal(int userId,std::string userName, std::string 
     json secondResp;
     std::string finalAnswer;
     try {
-        json secondReq = strategy->buildRequest(messages);
+        json secondReq = buildRequestWithContext();
         secondResp = executeCurl(secondReq, userId, modelType);
         finalAnswer = strategy->parseResponse(secondResp);
     } catch (...) {
@@ -147,15 +147,9 @@ void AIHelper::chatStreaming(int userId, std::string userName, std::string sessi
     std::cout << "[AIHelper::chatStreaming] received modelType=" << modelType
                 << " -> strategy: model=" << strategy->getModel()
                 << " url=" << strategy->getApiUrl() << std::endl;
-    // MCP不走流式，直接同步chat
-    if (strategy->isMCPModel) {
-        std::string answer = chatInternal(userId, userName, sessionId, userQuestion, modelType);
-        onChunk(answer);
-        return;
-    }
-    // 非MCP流式
+    // 目前仅支持 MCP 模型的流式接口，其他模型走普通接口
     addMessage(userId, userName, true, userQuestion, sessionId); // 增加一条用户消息
-    json payload = strategy->buildRequest(this->messages);
+    json payload = buildRequestWithContext();
     payload["stream"] = true; // 开启流式响应
     std::string fullresult; // 拼接完整响应
     // 直接调用网关的流式接口，两次回调，一次是每块数据，一次是完整响应
@@ -226,6 +220,40 @@ std::string AIHelper::escapeString(const std::string& input) {
     return output;
 }
 
+// 辅助方法：上下文窗口裁剪
+json AIHelper::buildRequestWithContext() {
+    int maxContext = strategy->getMaxContext(); 
+    int total = static_cast<int>(messages.size()); // 总消息数量
+
+    // 不需要裁剪上下文
+    if(maxContext <= 0 || total <= maxContext * 2 + 2){
+        return strategy->buildRequest(messages);
+    }
+
+    // 裁剪上下文：保留最新maxContext轮对话 
+    int recent = maxContext * 2; // 每轮对话包含用户和AI两条消息
+    int omitted = (total - recent - 2) / 2; // 被裁剪掉的轮数
+
+    // 构建送入模型的上下文窗口
+    std::vector<std::pair<std::string, long long>> context;
+    context.push_back(messages[0]); // 用户最早的提问
+    context.push_back(messages[1]); // ai最早的回答
+    for(int i = total - recent; i < total; ++i){
+        context.push_back(messages[i]);
+    }
+
+    json payload = strategy->buildRequest(context);
+    // 告知模型有消息被裁剪
+    json sysMsg;
+    sysMsg["role"] = "system";
+    sysMsg["content"] = "注意：由于上下文长度限制，中间有" + std::to_string(omitted)
+                        + "轮对话被裁剪，请根据当前剩余窗口内容回答用户的问题。";
+    
+    auto& msgArray = payload["messages"];
+    msgArray.insert(msgArray.begin() + 2, sysMsg); // 插入到第一轮对话之后
+
+    return payload;
+}
 
 void AIHelper::pushMessageToMysql(int userId, const std::string& userName, bool is_user, const std::string& userInput,long long ms, std::string sessionId) {
     std::string safeUserName = escapeString(userName);

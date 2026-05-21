@@ -52,21 +52,19 @@ void StrategyFactory::loadFromConfig(const std::string& configPath) {
         std::string name = model["name"];
         std::string url  = model["api_url"];
         std::string key  = model.value("api_key", "");
-        std::string type = model.value("type", "openai");
+        std::string type = model.value("type", "mcp");
+        int maxContext = model.value("max_context", 0);
 
         if (type == "rag") {
             registerStrategy(id, [=] {
-                return std::make_shared<AliyunRAGStrategy>(name, url, key);
+                return std::make_shared<AliyunRAGStrategy>(name, url, key, maxContext);
             });
         } else {
-            bool isMcp = (type == "mcp");
             registerStrategy(id, [=] {
-                return std::make_shared<GenericAIStrategy>(name, url, key, isMcp);
+                return std::make_shared<GenericAIStrategy>(name, url, key, maxContext);
             });
         }
 
-        std::cout << "[Model] Registered: " << id << " -> " << name
-                  << " (type=" << type << ")" << std::endl;
     }
 
     std::cout << "[Model] Default model: " << defaultModel_ << std::endl;
