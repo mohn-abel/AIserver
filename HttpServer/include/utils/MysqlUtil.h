@@ -12,7 +12,8 @@ namespace http
     class QueryResult
     {
     public:
-        QueryResult(std::shared_ptr<db::DbConnection> conn, db::DbQueryResult result)
+        using PooledConn = std::unique_ptr<db::DbConnection, db::PoolDeleter>;
+        QueryResult(PooledConn conn, db::DbQueryResult result)
             : conn_(std::move(conn)), result_(std::move(result)) {}
 
         ~QueryResult() = default;
@@ -41,7 +42,7 @@ namespace http
         explicit operator bool() const { return static_cast<bool>(result_); }
 
     private:
-        std::shared_ptr<db::DbConnection> conn_;  // 持有连接，防止提前归还
+        PooledConn conn_;   // 持有连接，析构时通过 PoolDeleter 自动归还池
         db::DbQueryResult result_;                 // 持有 stmt + ResultSet
     };
 

@@ -95,8 +95,6 @@ private:
 
 	std::unique_ptr<http::utils::ThreadPool> businessPool_;
 
-	std::unordered_map<int, bool>	onlineUsers_;
-	std::mutex	mutexForOnlineUsers_;
 
 	
 

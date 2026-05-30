@@ -1,22 +1,38 @@
 #pragma once
-#include <queue>
+#include <vector>
 #include <mutex>
 #include <condition_variable>
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <chrono>
 #include "DbConnection.h"
 
-namespace http 
+namespace http
 {
-namespace db 
+namespace db
 {
 
-class DbConnectionPool 
+class DbConnectionPool;
+
+struct PoolDeleter {
+    DbConnectionPool* pool;
+    void operator()(DbConnection* conn) const;
+};
+
+// 连接条目：持有连接 + 最后归还时间戳
+struct ConnEntry {
+    std::unique_ptr<DbConnection, PoolDeleter> conn;
+    std::chrono::steady_clock::time_point lastReturned;
+};
+
+class DbConnectionPool
 {
+    friend struct PoolDeleter;
+
 public:
     // 单例模式
-    static DbConnectionPool& getInstance() 
+    static DbConnectionPool& getInstance()
     {
         static DbConnectionPool instance;
         return instance;
@@ -30,7 +46,13 @@ public:
              size_t poolSize = 10);
 
     // 获取连接
-    std::shared_ptr<DbConnection> getConnection();
+    std::unique_ptr<DbConnection, PoolDeleter> getConnection();
+
+    // 连接信息（供 PoolDeleter/checkConnections 重建连接时使用）
+    const std::string& getHost()     const { return host_; }
+    const std::string& getUser()     const { return user_; }
+    const std::string& getPassword() const { return password_; }
+    const std::string& getDatabase() const { return database_; }
 
 private:
     // 构造函数
@@ -42,21 +64,28 @@ private:
     DbConnectionPool(const DbConnectionPool&) = delete;
     DbConnectionPool& operator=(const DbConnectionPool&) = delete;
 
-    std::shared_ptr<DbConnection> createConnection();
+    std::unique_ptr<DbConnection, PoolDeleter> createConnection();
 
-    void checkConnections(); // 添加连接检查方法
+    void checkConnections();
+    void returnConnection(DbConnection* conn);
+
+    // 创建一个全新连接，用于替换坏连接
+    std::unique_ptr<DbConnection, PoolDeleter> spawnReplacement();
 
 private:
     std::string                               host_;
     std::string                               user_;
     std::string                               password_;
     std::string                               database_;
-    std::queue<std::shared_ptr<DbConnection>> connections_;
+    // vector 尾进尾出 = LIFO 栈，热连接优先复用
+    std::vector<ConnEntry>                    connections_;
     std::mutex                                mutex_;
     std::condition_variable                   cv_;
     bool                                      initialized_ = false;
-    std::atomic<bool>                         stop_{false}; // 控制检查线程退出
-    std::thread                               checkThread_; // 添加检查线程
+    std::atomic<bool>                         stop_{false};
+    std::thread                               checkThread_;
+    std::chrono::seconds                      idleThreshold_{60};   // 空闲超过此阈值才探活
+    int                                       maxCheckPerRound_{5}; // 每轮最多检查数
 };
 
 } // namespace db

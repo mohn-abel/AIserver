@@ -285,10 +285,10 @@ cd build && ./http_server -p 8080   # 指定端口
 ### 请求示例
 
 ```bash
-# 登录
-curl -X POST http://127.0.0.1:8080/login \
+# 登录并获取sessionID
+curl -v -X POST http://127.0.0.1:8080/login \
   -H "Content-Type: application/json" \
-  -d '{"username":"user1","password":"123"}'
+  -d '{"username":"test123","password":"123456"}'
 
 # 发送消息（需携带 Session Cookie）
 curl -X POST http://127.0.0.1:8080/chat/send \
