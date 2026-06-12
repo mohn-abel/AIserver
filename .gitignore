@@ -1,5 +1,14 @@
 build/
+build-debug/
+build-release/
 .vscode/
+
+# 编译产物（误提交的测试二进制）
+AIApps/ChatServer/tests/test_gateway
+
+# 含密钥的私有配置（仅提交 *.example.json 模板）
+AIApps/ChatServer/resource/gateway_config.json
+AIApps/ChatServer/resource/model_config.json
 *.swp
 *.swo
 *.swk

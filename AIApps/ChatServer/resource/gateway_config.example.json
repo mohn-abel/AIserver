@@ -3,17 +3,17 @@
   "backends": {
     "aliyun-qwen": {
       "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      "api_key": "sk-REDACTED",
+      "api_key": "sk-REPLACE_WITH_YOUR_API_KEY",
       "model_name": "qwen-plus"
     },
     "deepseek-v4-pro": {
       "api_url": "https://api.deepseek.com/v1/chat/completions",
-      "api_key": "sk-REDACTED",
+      "api_key": "sk-REPLACE_WITH_YOUR_API_KEY",
       "model_name": "deepseek-v4-pro"
     },
     "aliyun-mcp": {
       "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      "api_key": "sk-REDACTED",
+      "api_key": "sk-REPLACE_WITH_YOUR_API_KEY",
       "model_name": "qwen-plus"
     }
   },

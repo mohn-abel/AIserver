@@ -215,10 +215,18 @@ sudo apt install nlohmann-json3-dev libmysqlcppconn-dev libssl-dev \
 
 ### 编译
 
+Debug 构建用于 GDB 调试：
+
 ```bash
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug -j2
+```
+
+Release 构建用于运行和压测：
+
+```bash
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build build-release -j2
 ```
 
 ### 启动依赖服务
@@ -233,8 +241,8 @@ rabbitmqctl status
 ### 启动
 
 ```bash
-cd build && ./http_server           # 默认 80 端口（需 root）
-cd build && ./http_server -p 8080   # 指定端口
+cd build-release && ./http_server           # 默认 80 端口（需 root）
+cd build-release && ./http_server -p 8080   # 指定端口
 ```
 
 ### 配置
@@ -303,6 +311,8 @@ curl -X POST http://127.0.0.1:8080/chat/send \
 
 项目提供 wrk Lua 脚本用于压力测试。
 
+以下成绩基于 Release 构建（`CMAKE_BUILD_TYPE=Release`，`-O3 -DNDEBUG`），测试命令使用 4 线程、200 连接、30 秒。
+
 ### 场景一：GET 页面压测（静态路由）
 
 ```bash
@@ -312,9 +322,9 @@ wrk -t4 -c200 -d30s http://127.0.0.1:8080/entry
 | 指标 | 数值 |
 |------|------|
 | 线程/连接 | 4 threads / 200 connections |
-| QPS | ~71133 req/s |
-| 平均延迟 | ~2.83 ms |
-| 吞吐 | ~515 MB/s |
+| QPS | 122511.30 req/s |
+| 平均延迟 | 1.69 ms |
+| 吞吐 | 1.09 GB/s |
 
 ### 场景二：动态路由 + Session 鉴权
 
@@ -325,9 +335,9 @@ wrk -t4 -c200 -d30s -H "Cookie: sessionId=<yourSessionId>" http://127.0.0.1:8080
 | 指标 | 数值 |
 |------|------|
 | 线程/连接 | 4 threads / 200 connections |
-| QPS | ~53754 req/s |
-| 平均延迟 | ~3.72 ms |
-| 吞吐 | ~424.57 MB/s |
+| QPS | 112443.75 req/s |
+| 平均延迟 | 1.79 ms |
+| 吞吐 | 0.91 GB/s |
 
 ### 场景三：登录压测（POST + JSON）
 

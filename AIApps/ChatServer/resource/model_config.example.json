@@ -5,15 +5,15 @@
       "id": "aliyun-qwen",
       "name": "qwen-plus",
       "api_url": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-      "api_key": "sk-REDACTED",
+      "api_key": "sk-REPLACE_WITH_YOUR_API_KEY",
       "type": "mcp",
       "max_context": 20
     },
     {
       "id": "aliyun-rag",
       "name": "",
-      "api_url": "https://dashscope.aliyuncs.com/api/v1/apps/8e9577eb10ce46ea9d07924a63ea3a3d/completion",
-      "api_key": "sk-REDACTED",
+      "api_url": "https://dashscope.aliyuncs.com/api/v1/apps/<YOUR_RAG_APP_ID>/completion",
+      "api_key": "sk-REPLACE_WITH_YOUR_API_KEY",
       "type": "rag",
       "max_context": 20
     },
@@ -21,7 +21,7 @@
       "id": "deepseek-v4-pro",
       "name": "deepseek-v4-pro",
       "api_url": "https://api.deepseek.com/v1/chat/completions",
-      "api_key": "sk-REDACTED",
+      "api_key": "sk-REPLACE_WITH_YOUR_API_KEY",
       "type": "mcp",
       "max_context": 20
     }

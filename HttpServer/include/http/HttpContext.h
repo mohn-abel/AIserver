@@ -12,6 +12,7 @@ namespace http
 class HttpContext 
 {
 public:
+    // 四种状态机
     enum HttpRequestParseState
     {
         kExpectRequestLine, // 解析请求行

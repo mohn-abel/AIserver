@@ -13,17 +13,18 @@ bool HttpContext::parseRequest(Buffer *buf, Timestamp receiveTime)
     bool hasMore = true;
     while (hasMore)
     {
-        if (state_ == kExpectRequestLine)
+        if (state_ == kExpectRequestLine) // 解析请求行状态
         {
+            // 获取扁平化HTTP报文中\r\n的指针位置
             const char *crlf = buf->findCRLF(); // 注意这个返回值边界可能有错
             if (crlf)
             {
-                ok = processRequestLine(buf->peek(), crlf);
+                ok = processRequestLine(buf->peek(), crlf); // 解析请求行成功
                 if (ok)
                 {
-                    request_.setReceiveTime(receiveTime);
-                    buf->retrieveUntil(crlf + 2);
-                    state_ = kExpectHeaders;
+                    request_.setReceiveTime(receiveTime); // 记录报文到达时间，存入request结构体中
+                    buf->retrieveUntil(crlf + 2); // 指针后移两个位置
+                    state_ = kExpectHeaders; // 状态切换
                 }
                 else
                 {
@@ -35,15 +36,16 @@ bool HttpContext::parseRequest(Buffer *buf, Timestamp receiveTime)
                 hasMore = false;
             }
         }
-        else if (state_ == kExpectHeaders)
+        else if (state_ == kExpectHeaders) // 解析请求头状态
         {
-            const char *crlf = buf->findCRLF();
+            const char *crlf = buf->findCRLF(); // 获取\r\n位置
             if (crlf)
             {
+                // 获取：位置
                 const char *colon = std::find(buf->peek(), crlf, ':');
-                if (colon < crlf)
+                if (colon < crlf) // ：在\r\n之前
                 {
-                    request_.addHeader(buf->peek(), colon, crlf);
+                    request_.addHeader(buf->peek(), colon, crlf); // 在request结构体的Header字段中添加请求头内容
                 }
                 else if (buf->peek() == crlf)
                 { 
