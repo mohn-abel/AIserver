@@ -104,7 +104,14 @@ std::unique_ptr<DbConnection, PoolDeleter> DbConnectionPool::getConnection()
                 throw DbException("Connection pool not initialized");
             }
             LOG_INFO << "Waiting for available connection...";
-            cv_.wait(lock);
+            // 带超时等待：避免连接耗尽时业务线程永久阻塞，超时则快速失败
+            if (cv_.wait_for(lock, acquireTimeout_,
+                             [this] { return !connections_.empty(); }))
+            {
+                break;  // 谓词为真：有可用连接
+            }
+            // 超时仍无可用连接
+            throw DbException("Timeout acquiring database connection from pool");
         }
 
         // LIFO: 从尾部取（最后归还的 = 最热的）

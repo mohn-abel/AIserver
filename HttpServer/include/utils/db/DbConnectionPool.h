@@ -86,6 +86,7 @@ private:
     std::thread                               checkThread_;
     std::chrono::seconds                      idleThreshold_{60};   // 空闲超过此阈值才探活
     int                                       maxCheckPerRound_{5}; // 每轮最多检查数
+    std::chrono::milliseconds                 acquireTimeout_{5000};// 获取连接的最大等待时间，超时抛异常
 };
 
 } // namespace db

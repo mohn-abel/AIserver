@@ -13,16 +13,44 @@ namespace {
         return total;
     }
 
+    // 从后端返回体提取错误信息
+    // 兼容 OpenAI / DashScope 风格：{"error":{"message":...,"code":...}} 或 {"error":"..."} 或 {"message":...}
+    std::string extractBackendError(const std::string& body) {
+        try {
+            auto j = json::parse(body);
+            if (j.contains("error")) {
+                const auto& err = j["error"];
+                if (err.is_object()) {
+                    std::string msg = err.value("message", std::string{});
+                    std::string code = err.value("code", std::string{});
+                    if (!code.empty()) msg += " (code=" + code + ")";
+                    if (!msg.empty()) return msg;
+                    return err.dump();
+                }
+                if (err.is_string()) return err.get<std::string>();
+            }
+            if (j.contains("message") && j["message"].is_string()) {
+                return j["message"].get<std::string>();
+            }
+        } catch (...) {
+            // 非 JSON：返回截断的原始片段
+        }
+        return body.size() > 200 ? body.substr(0, 200) + "..." : body;
+    }
+
     // 流式回调上下文
     struct StreamContext {
         ChunkCallback onChunk;
-        std::string   buffer;   // 缓存不完整的行
+        std::string   buffer;        // 缓存不完整的行
+        std::string   raw;           // 累积全部原始字节，用于错误检测
+        bool          sawData = false; // 是否出现过 SSE "data:" 行
     };
 
     size_t streamingWriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
         auto* ctx = static_cast<StreamContext*>(userp);
         size_t total = size * nmemb;
 
+        ctx->raw.append(static_cast<char*>(contents), total);
         ctx->buffer.append(static_cast<char*>(contents), total);
 
         // 按行拆分，处理完整的 SSE 行
@@ -45,6 +73,7 @@ namespace {
 
                 if (data == "[DONE]") continue;
 
+                ctx->sawData = true;
                 ctx->onChunk(data);
             }
         }
@@ -150,6 +179,10 @@ std::string LLMGateway::executeHttp(const std::string& url,
     // 执行
     CURLcode res = curl_easy_perform(curl);
 
+    // 在清理前取出 HTTP 状态码
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
     // 先清理，再检查错误（防止泄漏）
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
@@ -162,6 +195,12 @@ std::string LLMGateway::executeHttp(const std::string& url,
         }
         throw BackendException(
             "curl_easy_perform() failed: " + std::string(errStr));
+    }
+
+    // 传输层成功（curl OK）不等于业务成功：HTTP 4xx/5xx 是后端业务错误（欠费/鉴权/限流等）
+    if (httpCode >= 400) {
+        throw BackendException(
+            "Backend HTTP " + std::to_string(httpCode) + ": " + extractBackendError(readBuffer));
     }
 
     return readBuffer;
@@ -203,6 +242,9 @@ void LLMGateway::executeHttpStreaming(const std::string& url,
 
     CURLcode res = curl_easy_perform(curl);
 
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
 
@@ -214,6 +256,19 @@ void LLMGateway::executeHttpStreaming(const std::string& url,
         }
         throw BackendException(
             "curl_easy_perform() failed: " + std::string(errStr));
+    }
+
+    // HTTP 4xx/5xx：业务错误（欠费/鉴权/限流等），后端不会以 SSE 形式返回，需主动抛出
+    if (httpCode >= 400) {
+        throw BackendException(
+            "Backend HTTP " + std::to_string(httpCode) + ": " + extractBackendError(ctx.raw));
+    }
+
+    // 状态码 200 但整个流没有任何 "data:" 行、且 body 是错误 JSON：同样视为后端失败
+    // （防止错误响应被静默吞掉、前端只看到空白）
+    if (!ctx.sawData && !ctx.raw.empty()) {
+        throw BackendException(
+            "Backend returned no stream data: " + extractBackendError(ctx.raw));
     }
 }
 
