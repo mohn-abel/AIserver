@@ -7,27 +7,27 @@
 // ---------------------------------------------------------------------------
 // 异常体系 — 全部继承 std::runtime_error，兼容现有 catch(const std::exception&)
 // ---------------------------------------------------------------------------
-
+// 网关异常
 class GatewayException : public std::runtime_error {
 public:
     explicit GatewayException(const std::string& msg) : std::runtime_error(msg) {}
 };
-
+// 限流异常
 class RateLimitException : public GatewayException {
 public:
     explicit RateLimitException(const std::string& msg) : GatewayException(msg) {}
 };
-
+// 熔断异常
 class CircuitOpenException : public GatewayException {
 public:
     explicit CircuitOpenException(const std::string& msg) : GatewayException(msg) {}
 };
-
+// 超时异常
 class TimeoutException : public GatewayException {
 public:
     explicit TimeoutException(const std::string& msg) : GatewayException(msg) {}
 };
-
+// 后端异常
 class BackendException : public GatewayException {
 public:
     explicit BackendException(const std::string& msg) : GatewayException(msg) {}

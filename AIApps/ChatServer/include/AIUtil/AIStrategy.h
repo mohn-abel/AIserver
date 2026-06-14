@@ -21,7 +21,15 @@ public:
     virtual std::string parseResponse(const json& response) const = 0;
     virtual std::string parseStreamChunk(const std::string& jsonStr) const = 0;
     virtual bool supportTools() const {return false;}
-    virtual int getMaxContext() const { return 0; } 
+    virtual int getMaxContext() const { return 0; }
+
+    // 在 payload 中设置流式参数。默认按 OpenAI 兼容接口设置 stream=true。
+    // 子类（如 AliyunRAGStrategy）可按自身接口格式重写。
+    virtual void enableStreaming(json& payload) const {
+        payload["stream"] = true;
+    }
+    // 属于RAG模型的专属增加Header的虚函数
+    virtual std::vector<std::pair<std::string, std::string>> getExtraHeaders(){return {};}
 };
 
 // 通用策略类：支持所有 OpenAI 兼容 API（DeepSeek、OpenAI、Ollama、vLLM 等）
@@ -101,9 +109,7 @@ public:
                       const std::string& apiKey,
                       int maxContext)
         : modelName_(modelName), apiUrl_(apiUrl), apiKey_(apiKey), maxContext_(maxContext)
-    {
-        
-    }
+    {}
 
     std::string getApiUrl() const override { return apiUrl_; }
     std::string getApiKey() const override { return apiKey_; }
@@ -144,6 +150,13 @@ public:
     
     int getMaxContext() const override {
         return maxContext_; // 默认上下文长度限制，实际值可从配置文件读取
+    }
+
+    std::vector<std::pair<std::string, std::string>> getExtraHeaders() override{
+        return{{"X-DashScope-SSE", "enable"}};
+    }
+    void enableStreaming(json& payload) const override {
+        payload["parameters"]["incremental_output"] = true;
     }
 
 private:

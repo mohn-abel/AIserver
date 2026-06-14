@@ -1,39 +1,69 @@
 #include "../../include/LLMGateway/CircuitBreaker.h"
+#include <algorithm>
 #include <iostream>
+// 熔断器配置
+void CircuitBreaker::configure(long long windowMs,
+                               double failureRateThreshold,
+                               int minRequests,
+                               long long recoveryTimeoutMs,
+                               int halfOpenMax) {
+    std::lock_guard<std::mutex> lock(mutex_);                     
+    windowMs_ = std::max(1LL, windowMs);
+    failureRateThreshold_ = std::clamp(failureRateThreshold, 0.0, 1.0);
+    minRequests_ = std::max(1, minRequests);
+    recoveryTimeoutMs_ = recoveryTimeoutMs;
+    halfOpenMaxRequests_ = std::max(1, halfOpenMax);
 
-void CircuitBreaker::configure(int failureThreshold, long long recoveryTimeoutMs, int halfOpenMax) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    failureThreshold_   = failureThreshold;
-    recoveryTimeoutMs_  = recoveryTimeoutMs;
-    halfOpenMaxRequests_ = halfOpenMax;
+    resetWindow(nowMs());
+    halfOpenSuccesses_ = 0;
+}
+// 重置窗口
+void CircuitBreaker::resetWindow(long long now) {
+    windowStartMs_ = now;
+    windowRequests_ = 0;
+    windowFailures_ = 0;
 }
 
+void CircuitBreaker::rotateWindowIfNeeded(long long now) {
+    if (windowStartMs_ == 0 || now - windowStartMs_ >= windowMs_) {
+        resetWindow(now);
+    }
+}
+// 状态流转
 void CircuitBreaker::transitionTo(CircuitState newState) {
     CircuitState old = state_;
+    if (old == newState) return;
+
     state_ = newState;
+    long long now = nowMs();
+
     if (newState == CircuitState::OPEN) {
-        lastFailureTimeMs_ = nowMs();
+        openedTimeMs_ = now;
     }
     if (newState == CircuitState::HALF_OPEN) {
         halfOpenSuccesses_ = 0;
     }
     if (newState == CircuitState::CLOSED) {
-        consecutiveFailures_ = 0;
+        halfOpenSuccesses_ = 0;
+        resetWindow(now);
     }
+
     std::cout << "[CircuitBreaker:" << backendId_ << "] "
               << circuitStateName(old) << " -> " << circuitStateName(newState)
-              << " (failures=" << consecutiveFailures_ << ")" << std::endl;
+              << " (window=" << windowFailures_ << "/" << windowRequests_
+              << ", threshold=" << failureRateThreshold_ << ")" << std::endl;
 }
-
+// 请求通过
 bool CircuitBreaker::allowRequest() {
     std::lock_guard<std::mutex> lock(mutex_);
 
     switch (state_) {
     case CircuitState::CLOSED:
+        rotateWindowIfNeeded(nowMs());
         return true;
 
     case CircuitState::OPEN: {
-        long long elapsed = nowMs() - lastFailureTimeMs_;
+        long long elapsed = nowMs() - openedTimeMs_;
         if (elapsed >= recoveryTimeoutMs_) {
             transitionTo(CircuitState::HALF_OPEN);
             return true;
@@ -42,11 +72,29 @@ bool CircuitBreaker::allowRequest() {
     }
 
     case CircuitState::HALF_OPEN:
-        // 半开状态放行所有请求作为探测
         return true;
     }
 
     return false;
+}
+
+void CircuitBreaker::recordClosedRequest(bool failed) {
+    long long now = nowMs();
+    rotateWindowIfNeeded(now);
+
+    windowRequests_++;
+    if (failed) {
+        windowFailures_++;
+    }
+
+    if (windowRequests_ < minRequests_) {
+        return;
+    }
+
+    double failureRate = static_cast<double>(windowFailures_) / windowRequests_;
+    if (failureRate >= failureRateThreshold_) {
+        transitionTo(CircuitState::OPEN);
+    }
 }
 
 void CircuitBreaker::reportSuccess() {
@@ -54,7 +102,7 @@ void CircuitBreaker::reportSuccess() {
 
     switch (state_) {
     case CircuitState::CLOSED:
-        consecutiveFailures_ = 0;
+        recordClosedRequest(false);
         break;
 
     case CircuitState::HALF_OPEN:
@@ -65,7 +113,6 @@ void CircuitBreaker::reportSuccess() {
         break;
 
     case CircuitState::OPEN:
-        // 不应到达此处（OPEN 状态下不放行请求）
         break;
     }
 }
@@ -75,20 +122,14 @@ void CircuitBreaker::reportFailure() {
 
     switch (state_) {
     case CircuitState::CLOSED:
-        consecutiveFailures_++;
-        if (consecutiveFailures_ >= failureThreshold_) {
-            transitionTo(CircuitState::OPEN);
-        }
+        recordClosedRequest(true);
         break;
 
     case CircuitState::HALF_OPEN:
-        // 半开状态下任何失败立即重新熔断
-        consecutiveFailures_ = failureThreshold_;  // 保留失败计数
         transitionTo(CircuitState::OPEN);
         break;
 
     case CircuitState::OPEN:
-        // 不应到达此处
         break;
     }
 }

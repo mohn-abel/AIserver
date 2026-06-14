@@ -67,22 +67,34 @@ std::string AIConfig::buildPrompt(const std::string& userInput) const {
 // 解析 AI 响应，提取工具调用信息
 AIToolCall AIConfig::parseAIResponse(const std::string& response) const {
     AIToolCall result;
+    result.rawResponse = response;
+
     try {
-        // 尝试将响应解析为 JSON
         json j = json::parse(response);
 
-        // 检查是否包含工具调用指令
-        if (j.contains("tool") && j["tool"].is_string()) {
+        // 新格式：{"need_tool": true/false, "tool": "...", "args": {...}}
+        if (j.contains("need_tool") && j["need_tool"].is_boolean()) {
+            result.isToolCall = j["need_tool"].get<bool>();
+            if (result.isToolCall) {
+                result.toolName = j.value("tool", "");
+                if (j.contains("args") && j["args"].is_object()) {
+                    result.args = j["args"];
+                }
+            }
+            return result;
+        }
+
+        // 兼容旧格式：{"tool":"get_weather","args":{...}}
+        if (j.contains("tool") && j["tool"].is_string() && !j["tool"].get<std::string>().empty()) {
+            result.isToolCall = true;
             result.toolName = j["tool"].get<std::string>();
-            // 提取工具参数
             if (j.contains("args") && j["args"].is_object()) {
                 result.args = j["args"];
             }
-            result.isToolCall = true;
         }
     }
     catch (...) {
-        // 不是 JSON 格式，直接返回普通文本响应
+        // 不是 JSON 格式 — 视为不需要工具
         result.isToolCall = false;
     }
     return result;

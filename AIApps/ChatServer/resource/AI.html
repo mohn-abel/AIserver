@@ -176,7 +176,7 @@
         }
         .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
 
-        /* 流式开关 */
+        /* MCP 工具开关 */
         .toggle-group {
             display: flex;
             align-items: center;
@@ -397,10 +397,10 @@
         </select>
         <label class="toggle-group">
             <span class="toggle-switch">
-                <input type="checkbox" id="streamToggle" checked>
+                <input type="checkbox" id="toolToggle" checked>
                 <span class="toggle-slider"></span>
             </span>
-            流式
+            MCP工具
         </label>
         <button class="btn btn-outline" onclick="window.location.href='/menu'">返回</button>
     </div>
@@ -420,7 +420,7 @@
     const questionInput = document.getElementById('questionInput');
     const sendBtn = document.getElementById('sendBtn');
     const sessionList = document.getElementById('sessionList');
-    const streamToggle = document.getElementById('streamToggle');
+    const toolToggle = document.getElementById('toolToggle');
     const modelSelect = document.getElementById('modelSelect');
 
     function scrollBottom() { chatArea.scrollTop = chatArea.scrollHeight; }
@@ -638,80 +638,35 @@
         questionInput.value = '';
         questionInput.style.height = 'auto';
 
-        const stream = streamToggle.checked;
+        const enableTools = toolToggle.checked;
         const modelType = modelSelect.value;
 
         appendMessage('user', question);
 
         if (tempSession) {
-            if (stream) {
-                let sid = null;
-                const content = await sendStreaming(
-                    '/chat/send-new-session',
-                    { question, modelType, stream: true },
-                    (sessionId) => { sid = sessionId; }
-                );
-                if (sid) {
-                    sessions[sid] = { name: '新会话', messages: [
-                        { role: 'user', content: question },
-                        { role: 'assistant', content }
-                    ]};
-                    currentSessionId = sid;
-                    tempSession = false;
-                    renderSessions();
-                }
-            } else {
-                try {
-                    const r = await fetch('/chat/send-new-session', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ question, modelType })
-                    });
-                    const d = await r.json();
-                    if (d.success) {
-                        const sid = String(d.sessionId);
-                        sessions[sid] = { name: '新会话', messages: [
-                            { role: 'user', content: question },
-                            { role: 'assistant', content: d.Information }
-                        ]};
-                        currentSessionId = sid;
-                        tempSession = false;
-                        renderSessions();
-                        appendMessage('assistant', d.Information);
-                    } else {
-                        appendMessage('assistant', '[错误] ' + (d.message || '未知错误'));
-                    }
-                } catch (e) {
-                    appendMessage('assistant', '[错误] 无法连接服务器');
-                }
+            let sid = null;
+            const content = await sendStreaming(
+                '/chat/send-new-session',
+                { question, modelType, enableTools },
+                (sessionId) => { sid = sessionId; }
+            );
+            if (sid) {
+                sessions[sid] = { name: '新会话', messages: [
+                    { role: 'user', content: question },
+                    { role: 'assistant', content }
+                ]};
+                currentSessionId = sid;
+                tempSession = false;
+                renderSessions();
             }
         } else {
             sessions[currentSessionId].messages.push({ role: 'user', content: question });
-            if (stream) {
-                const content = await sendStreaming(
-                    '/chat/send',
-                    { question, modelType, sessionId: currentSessionId, stream: true }
-                );
-                if (content) {
-                    sessions[currentSessionId].messages.push({ role: 'assistant', content });
-                }
-            } else {
-                try {
-                    const r = await fetch('/chat/send', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ question, modelType, sessionId: currentSessionId })
-                    });
-                    const d = await r.json();
-                    if (d.success) {
-                        appendMessage('assistant', d.Information);
-                        sessions[currentSessionId].messages.push({ role: 'assistant', content: d.Information });
-                    } else {
-                        appendMessage('assistant', '[错误] ' + (d.message || '未知错误'));
-                    }
-                } catch (e) {
-                    appendMessage('assistant', '[错误] 无法连接服务器');
-                }
+            const content = await sendStreaming(
+                '/chat/send',
+                { question, modelType, sessionId: currentSessionId, enableTools }
+            );
+            if (content) {
+                sessions[currentSessionId].messages.push({ role: 'assistant', content });
             }
         }
     }

@@ -37,139 +37,150 @@ void AIHelper::restoreMessage(const std::string& userInput,long long ms) {
     messages.push_back({ userInput,ms });
 }
 
-// chat内部方法，调用前需持有mutex_
-std::string AIHelper::chatInternal(int userId,std::string userName, std::string sessionId, std::string userQuestion, std::string modelType) {
-    //设置策略
+// 统一设置模型策略并打印日志
+void AIHelper::prepareStrategy(const std::string& modelType) {
     setStrategy(StrategyFactory::instance().create(modelType));
-    std::cout << "[AIHelper::chat] received modelType=" << modelType
+    std::cout << "[AIHelper] modelType=" << modelType
               << " -> strategy: model=" << strategy->getModel()
               << " url=" << strategy->getApiUrl() << std::endl;
+}
 
-    
-    if (false == strategy->supportTools()) {
+// 工具路由：构造路由 prompt，执行非流式 LLM 调用，解析工具决策
+AIToolCall AIHelper::routeToolCall(int userId,
+                                   const std::string& userQuestion,
+                                   const std::string& modelType,
+                                   AIConfig& config) {
+    std::string routePrompt = config.buildPrompt(userQuestion);
+    std::cout << "[AIHelper::routeToolCall] routePrompt preview="
+              << routePrompt.substr(0, 120) << std::endl;
 
-        addMessage(userId, userName, true, userQuestion, sessionId);
-        json payload = buildRequestWithContext();
+    messages.push_back({routePrompt, 0});
 
-        //执行请求（经过网关）
-        json response = executeCurl(payload, userId, modelType);
-        std::string answer = strategy->parseResponse(response);
-        addMessage(userId, userName, false, answer, sessionId);
-        return answer.empty() ? "[Error] 无法解析响应" : answer;
-    }
-    //说明支持MCP
-    AIConfig config;
-    config.loadFromFile("../AIApps/ChatServer/resource/config.json");
-    std::string tempUserQuestion =config.buildPrompt(userQuestion);
-    std::cout << "tempUserQuestion is " << tempUserQuestion << std::endl;
-    messages.push_back({ tempUserQuestion, 0 });
-
-    json firstResp;
-    std::string aiResult;
     try {
         json firstReq = buildRequestWithContext();
-        firstResp = executeCurl(firstReq, userId, modelType);
-        aiResult = strategy->parseResponse(firstResp);
+        json firstResp = executeCurl(firstReq, userId, modelType);
+        std::string routeResult = strategy->parseResponse(firstResp);
+        messages.pop_back();
+
+        std::cout << "[AIHelper::routeToolCall] routeResult=" << routeResult << std::endl;
+        return config.parseAIResponse(routeResult);
     } catch (...) {
-        messages.pop_back();  // 异常时清理临时消息
+        messages.pop_back();
         throw;
     }
-    messages.pop_back();
+}
 
-    std::cout << "aiResult is " << aiResult << std::endl;
-    // 解析AI响应（是否工具调用）
-    AIToolCall call = config.parseAIResponse(aiResult);
+// 流式最终回答：基于当前 messages 构造请求，调用网关流式接口
+void AIHelper::completeStreaming(int userId,
+                                 const std::string& modelType,
+                                 ChunkCallback onChunk,
+                                 std::string& fullResult) {
+    json payload = buildRequestWithContext();
+    strategy->enableStreaming(payload);
 
-    // 情况1：AI 不调用工具
-    if (!call.isToolCall) {
+    std::cout << "[AIHelper::completeStreaming] url=" << strategy->getApiUrl() << std::endl;
+
+    auto extraHeaders = strategy->getExtraHeaders();
+    LLMGateway::instance().callStreaming(
+        modelType, payload,
+        strategy->getApiUrl(), strategy->getApiKey(),
+        userId,
+        [&](const std::string& chunk) {
+            std::string parsedChunk = strategy->parseStreamChunk(chunk);
+            if (!parsedChunk.empty()) {
+                fullResult += parsedChunk;
+                onChunk(parsedChunk);
+            }
+        },
+        extraHeaders
+    );
+}
+
+// 统一聊天入口：所有响应均通过 SSE 流式返回
+void AIHelper::chat(int userId,
+                    std::string userName,
+                    std::string sessionId,
+                    std::string userQuestion,
+                    std::string modelType,
+                    bool enableTools,
+                    ChunkCallback onChunk) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    prepareStrategy(modelType);
+
+    // ── 分支 1：不需要工具 → 直接流式回答 ──
+    if (!enableTools || !strategy->supportTools()) {
         addMessage(userId, userName, true, userQuestion, sessionId);
-        addMessage(userId, userName, false, aiResult, sessionId);
-
-        std::cout << "No tools required" << std::endl;
-        return aiResult;
+        std::string fullResult;
+        completeStreaming(userId, modelType, onChunk, fullResult);
+        addMessage(userId, userName, false, fullResult, sessionId);
+        return;
     }
 
-    // 情况 2：AI 要调用工具
-    json toolResult;
-    AIToolRegistry registry;
+    // ── 分支 2：需要工具 → 路由 → 工具执行 → 流式最终回答 ──
+    AIConfig config;
+    if (!config.loadFromFile("../AIApps/ChatServer/resource/config.json")) {
+        std::cerr << "[AIHelper] Config load failed, falling back to direct streaming" << std::endl;
+        addMessage(userId, userName, true, userQuestion, sessionId);
+        std::string fullResult;
+        completeStreaming(userId, modelType, onChunk, fullResult);
+        addMessage(userId, userName, false, fullResult, sessionId);
+        return;
+    }
 
+    // 第一次调用：工具路由（非流式）
+    AIToolCall call;
     try {
-        toolResult = registry.invoke(call.toolName, call.args);
-        std::cout << "Tool call success" << std::endl;
-    }
-    catch (const std::exception& e) {
-        //大多数情况都不会走这里
-        std::string err = "[工具调用失败] " + std::string(e.what());
+        call = routeToolCall(userId, userQuestion, modelType, config);
+    } catch (const std::exception& e) {
+        std::string err = "[路由调用失败] " + std::string(e.what());
+        std::cerr << "[AIHelper] " << err << std::endl;
         addMessage(userId, userName, true, userQuestion, sessionId);
         addMessage(userId, userName, false, err, sessionId);
-
-        std::cout << "Tool call failed" << std::endl << std::string(e.what());
-        return err;
+        onChunk(err);
+        return;
     }
 
-    // 第二次调用AI
-    // 用同样的 prompt_template，但说明工具执行过
-    std::string secondPrompt = config.buildToolResultPrompt(userQuestion, call.toolName, call.args, toolResult);
-    
-    std::cout << "secondPrompt is " << secondPrompt << std::endl;
-    messages.push_back({ secondPrompt, 0 });
+    // 执行工具调用（如果需要）
+    json toolResult;
+    if (call.isToolCall) {
+        AIToolRegistry registry;
+        try {
+            toolResult = registry.invoke(call.toolName, call.args);
+            std::cout << "[AIHelper] Tool call success: " << call.toolName << std::endl;
+        } catch (const std::exception& e) {
+            std::string err = "[工具调用失败] " + std::string(e.what());
+            std::cerr << "[AIHelper] " << err << std::endl;
+            addMessage(userId, userName, true, userQuestion, sessionId);
+            addMessage(userId, userName, false, err, sessionId);
+            onChunk(err);
+            return;
+        }
+    }
 
-    json secondResp;
-    std::string finalAnswer;
+    // 构造最终回答 prompt
+    std::string finalPrompt = call.isToolCall
+        ? config.buildToolResultPrompt(userQuestion, call.toolName, call.args, toolResult)
+        : userQuestion;
+
+    std::cout << "[AIHelper] finalPrompt preview="
+              << finalPrompt.substr(0, 120) << std::endl;
+
+    // 临时压入 messages 用于 LLM 上下文；回答落库前弹出
+    messages.push_back({finalPrompt, 0});
+
+    // 第二次调用：流式最终回答
+    std::string fullResult;
     try {
-        json secondReq = buildRequestWithContext();
-        secondResp = executeCurl(secondReq, userId, modelType);
-        finalAnswer = strategy->parseResponse(secondResp);
+        completeStreaming(userId, modelType, onChunk, fullResult);
     } catch (...) {
-        messages.pop_back();  // 异常时清理临时消息
+        messages.pop_back();
         throw;
     }
     messages.pop_back();
 
-    std::cout << "finalAnswer is " << finalAnswer << std::endl;
-
+    // 落库：只保存原始用户问题和最终 AI 答案
     addMessage(userId, userName, true, userQuestion, sessionId);
-    addMessage(userId, userName, false, finalAnswer, sessionId);
-    return finalAnswer;
-}
-
-// 发送聊天消息
-std::string AIHelper::chat(int userId,std::string userName, std::string sessionId, std::string userQuestion, std::string modelType) {
-    // 持有锁调用 chatInternal，确保 messages 和 strategy 的线程安全
-    std::lock_guard<std::mutex> lock(mutex_);
-    return chatInternal(userId, userName, sessionId, userQuestion, modelType);
-}
-
-// 发送聊天消息，启用流式回复
-void AIHelper::chatStreaming(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType, ChunkCallback onChunk){
-    std::lock_guard<std::mutex> lock(mutex_);
-    setStrategy(StrategyFactory::instance().create(modelType));
-    std::cout << "[AIHelper::chatStreaming] received modelType=" << modelType
-                << " -> strategy: model=" << strategy->getModel()
-                << " url=" << strategy->getApiUrl() << std::endl;
-    // 目前仅支持 MCP 模型的流式接口，其他模型走普通接口
-    addMessage(userId, userName, true, userQuestion, sessionId); // 增加一条用户消息
-    json payload = buildRequestWithContext();
-    payload["stream"] = true; // 开启流式响应
-    std::string fullresult; // 拼接完整响应
-    // 直接调用网关的流式接口，两次回调，一次是每块数据，一次是完整响应
-    LLMGateway::instance().callStreaming(
-        modelType,
-        payload,
-        strategy->getApiUrl(),
-        strategy->getApiKey(),  
-        userId,
-        [&](const std::string& chunk
-        ) {
-            std::string parsedChunk = strategy->parseStreamChunk(chunk);
-            if(!parsedChunk.empty()) {
-                fullresult += parsedChunk; // 拼接完整响应
-                onChunk(parsedChunk); // 每收到一块就回调一次
-            }
-        }
-    );
-
-    addMessage(userId, userName, false, fullresult, sessionId); // 增加一条AI消息
+    addMessage(userId, userName, false, fullResult, sessionId);
 }
 // 发送自定义请求体
 json AIHelper::request(const json& payload) {
@@ -222,7 +233,7 @@ std::string AIHelper::escapeString(const std::string& input) {
 
 // 辅助方法：上下文窗口裁剪
 json AIHelper::buildRequestWithContext() {
-    int maxContext = strategy->getMaxContext(); 
+    int maxContext = strategy->getMaxContext();
     int total = static_cast<int>(messages.size()); // 总消息数量
 
     // 不需要裁剪上下文
@@ -230,7 +241,7 @@ json AIHelper::buildRequestWithContext() {
         return strategy->buildRequest(messages);
     }
 
-    // 裁剪上下文：保留最新maxContext轮对话 
+    // 裁剪上下文：保留最新maxContext轮对话
     int recent = maxContext * 2; // 每轮对话包含用户和AI两条消息
     int omitted = (total - recent - 2) / 2; // 被裁剪掉的轮数
 
@@ -248,7 +259,7 @@ json AIHelper::buildRequestWithContext() {
     sysMsg["role"] = "system";
     sysMsg["content"] = "注意：由于上下文长度限制，中间有" + std::to_string(omitted)
                         + "轮对话被裁剪，请根据当前剩余窗口内容回答用户的问题。";
-    
+
     auto& msgArray = payload["messages"];
     msgArray.insert(msgArray.begin() + 2, sysMsg); // 插入到第一轮对话之后
 

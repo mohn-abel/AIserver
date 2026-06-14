@@ -8,7 +8,7 @@
 
 TokenBucket::TokenBucket(double rate, double burst)
     : rate_(rate), burstSize_(burst), tokens_(burst), lastRefillMs_(nowMs()) {}
-
+// 填充令牌桶，被动填充，而非定时填充，当请求到来时先填充令牌桶，再取走令牌
 void TokenBucket::refill() {
     long long now = nowMs();
     long long elapsed = now - lastRefillMs_;
@@ -17,9 +17,9 @@ void TokenBucket::refill() {
     // 按时间比例补充令牌
     double added = (elapsed / 1000.0) * rate_;
     tokens_ = std::min(tokens_ + added, burstSize_);
-    lastRefillMs_ = now;
+    lastRefillMs_ = now; // 更新填充时间
 }
-
+// 请求到来，尝试消费
 bool TokenBucket::tryConsume() {
     std::lock_guard<std::mutex> lock(mutex_);
     refill();
@@ -29,7 +29,7 @@ bool TokenBucket::tryConsume() {
     }
     return false;
 }
-
+// 更新桶配置
 void TokenBucket::setRate(double rate, double burst) {
     std::lock_guard<std::mutex> lock(mutex_);
     rate_ = rate;
@@ -40,7 +40,7 @@ void TokenBucket::setRate(double rate, double burst) {
 // ============================================================================
 // RateLimiter
 // ============================================================================
-
+// 后端限流配置
 void RateLimiter::configureBackend(const std::string& backendId, double rps, double burst) {
     std::lock_guard<std::mutex> lock(backendMutex_);
     auto it = backendBuckets_.find(backendId);
@@ -52,7 +52,7 @@ void RateLimiter::configureBackend(const std::string& backendId, double rps, dou
                                 std::forward_as_tuple(rps, burst));
     }
 }
-
+// 用户限流配置
 void RateLimiter::configureUserLimit(double rps, double burst) {
     userRps_   = rps;
     userBurst_ = burst;

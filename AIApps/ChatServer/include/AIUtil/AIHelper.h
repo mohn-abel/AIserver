@@ -32,12 +32,11 @@ public:
     // 恢复一条消息
     void restoreMessage(const std::string& userInput, long long ms);
 
-    // 发送聊天消息，返回AI的响应内容
-    // messages: [{"role":"system","content":"..."}, {"role":"user","content":"..."}]
-    std::string chat(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType);
-
-    // 发送流式聊条消息
-    void chatStreaming(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType, ChunkCallback onChunk);
+    // 统一聊天入口：所有响应均通过 SSE 流式返回。
+    // enableTools 为 true 且模型支持工具时，先做非流式工具路由再流式最终回答。
+    void chat(int userId, std::string userName, std::string sessionId,
+              std::string userQuestion, std::string modelType,
+              bool enableTools, ChunkCallback onChunk);
 
     // 可选：发送自定义请求体
     json request(const json& payload);
@@ -55,8 +54,20 @@ private:
     // curl 回调函数，把返回的数据写到 string buffer
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);
 
-    // chat内部方法
-    std::string chatInternal(int userId, std::string userName, std::string sessionId, std::string userQuestion, std::string modelType);
+    // 统一设置模型策略并打印日志
+    void prepareStrategy(const std::string& modelType);
+
+    // 工具路由：构造路由 prompt，执行非流式 LLM 调用，解析工具决策
+    AIToolCall routeToolCall(int userId,
+                             const std::string& userQuestion,
+                             const std::string& modelType,
+                             AIConfig& config);
+
+    // 流式最终回答：基于当前 messages 构造请求，调用网关流式接口
+    void completeStreaming(int userId,
+                           const std::string& modelType,
+                           ChunkCallback onChunk,
+                           std::string& fullResult);
 
     // 上下文窗口裁剪
     json buildRequestWithContext();

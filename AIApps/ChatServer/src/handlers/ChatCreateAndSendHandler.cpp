@@ -28,15 +28,15 @@ void ChatCreateAndSendHandler::handle(const http::HttpRequest& req, http::HttpRe
 
         std::string userQuestion;
         std::string modelType;
-        bool stream;
+        bool enableTools = true;
 
         auto body = req.getBody();
         if (!body.empty()) {
             auto j = json::parse(body);
             if (j.contains("question")) userQuestion = j["question"];
-            stream = j.contains("stream") ? j["stream"].get<bool>() : false;
 
             modelType = j.contains("modelType") ? j["modelType"].get<std::string>() : StrategyFactory::instance().getDefaultModel();
+            enableTools = j.value("enableTools", true);
         }
 
         // 生成会话ID（轻量操作，可在I/O线程完成）
@@ -48,7 +48,7 @@ void ChatCreateAndSendHandler::handle(const http::HttpRequest& req, http::HttpRe
         resp->setDeferred();
         auto conn = resp->getConnection();
 
-        server_->getBusinessPool()->enqueue([this, conn, userId, username, sessionId, userQuestion, modelType, stream]() {
+        server_->getBusinessPool()->enqueue([this, conn, userId, username, sessionId, userQuestion, modelType, enableTools]() {
             try {
                 std::shared_ptr<AIHelper> AIHelperPtr;
                 {
@@ -57,7 +57,7 @@ void ChatCreateAndSendHandler::handle(const http::HttpRequest& req, http::HttpRe
                     auto& userSessions = server_->chatInformation[userId];
 
                     if (userSessions.find(sessionId) == userSessions.end()) {
-                        userSessions.emplace( 
+                        userSessions.emplace(
                             sessionId,
                             std::make_shared<AIHelper>()
                         );
@@ -65,29 +65,30 @@ void ChatCreateAndSendHandler::handle(const http::HttpRequest& req, http::HttpRe
                     }
                     AIHelperPtr = userSessions[sessionId];
                 }
-                if(stream){
-                    http::HttpResponse::sendSSEHeaders(conn);
-                    // 先发 sessionId，客户端用它在本地建立会话
-                    json sessionInfo;
-                    sessionInfo["sessionId"] = sessionId;
-                    http::HttpResponse::sendSSEChunk(conn, sessionInfo.dump());
-                    AIHelperPtr->chatStreaming(userId, username, sessionId, userQuestion, modelType, [conn](const std::string& chunk){
-                        try{
-                            if(!chunk.empty()){
+                // 统一走 SSE 流式响应，先发 sessionId
+                http::HttpResponse::sendSSEHeaders(conn);
+                json sessionInfo;
+                sessionInfo["sessionId"] = sessionId;
+                http::HttpResponse::sendSSEChunk(conn, sessionInfo.dump());
+
+                AIHelperPtr->chat(userId, username, sessionId, userQuestion, modelType, enableTools,
+                    [conn](const std::string& chunk) {
+                        try {
+                            if (!chunk.empty()) {
                                 json chunkResp;
                                 chunkResp["id"] = "chatcmpl-stream";
                                 chunkResp["object"] = "chat.completion.chunk";
                                 chunkResp["choices"] = json::array({{
                                     {"index", 0},
                                     {"delta", {{"content", chunk}}},
-                                }}); // 模拟 OpenAI 的流式响应格式
+                                }});
                                 std::string chunkBody = chunkResp.dump();
 
                                 conn->getLoop()->runInLoop([conn, chunkBody]() {
                                     http::HttpResponse::sendSSEChunk(conn, chunkBody);
                                 });
                             }
-                        }catch(...){
+                        } catch (...) {
                             json errorChunkResp;
                             errorChunkResp["error"] = {{"message", "Error in streaming response"}};
                             std::string errorChunkBody = errorChunkResp.dump();
@@ -97,38 +98,18 @@ void ChatCreateAndSendHandler::handle(const http::HttpRequest& req, http::HttpRe
                             });
                         }
                     });
-                    conn->getLoop()->runInLoop([conn]() {
-                        http::HttpResponse::sendSSEEnd(conn);
-                    });
-
-                }else{
-                    std::string aiInformation=AIHelperPtr->chat(userId, username,sessionId, userQuestion, modelType);
-                    json successResp;
-                    successResp["success"] = true;
-                    successResp["Information"] = aiInformation;
-                    std::string successBody = successResp.dump(4);
-
-                    // 在 muduo I/O 线程中发送响应
-                    conn->getLoop()->runInLoop([conn, successBody]() {
-                        http::HttpResponse::sendJsonResponse(conn, successBody, "HTTP/1.1", false);
-                    });
-                }
+                conn->getLoop()->runInLoop([conn]() {
+                    http::HttpResponse::sendSSEEnd(conn);
+                });
             } catch (const std::exception& e) {
                 LOG_ERROR << "ChatCreateAndSendHandler async error: " << e.what();
-                if(stream){
-                    json errorChunkResp;
-                    errorChunkResp["error"] = {{"message", e.what()}};
-                    std::string errorChunkBody = errorChunkResp.dump();
+                json errorChunkResp;
+                errorChunkResp["error"] = {{"message", e.what()}};
+                std::string errorChunkBody = errorChunkResp.dump();
 
-                    conn->getLoop()->runInLoop([conn, errorChunkBody]() {
-                        http::HttpResponse::sendSSEError(conn, errorChunkBody);
-                    });
-                }else{
-                    std::string failureBody = json{{"status", "error"}, {"message", e.what()}}.dump(4);
-                    conn->getLoop()->runInLoop([conn, failureBody]() {
-                        http::HttpResponse::sendJsonResponse(conn, failureBody, "HTTP/1.1", true);
-                    });
-                }
+                conn->getLoop()->runInLoop([conn, errorChunkBody]() {
+                    http::HttpResponse::sendSSEError(conn, errorChunkBody);
+                });
             }
         });
 

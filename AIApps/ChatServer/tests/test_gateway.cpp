@@ -146,48 +146,103 @@ void test_rate_limiter_concurrent() {
 void test_cb_initial_state() {
     TEST("CircuitBreaker initial CLOSED");
     CircuitBreaker cb;
-    cb.configure(3, 10000, 2);
+    cb.configure(10000, 0.5, 3, 10000, 2);
     cb.setBackendId("test");
     if (cb.allowRequest() != true) { FAIL("should allow in CLOSED state"); return; }
     OK();
 }
 
-void test_cb_trip_to_open() {
-    TEST("CircuitBreaker CLOSED -> OPEN after threshold");
+void test_cb_fixed_window_failure_rate_opens() {
+    TEST("CircuitBreaker fixed-window failure rate opens");
     CircuitBreaker cb;
-    cb.configure(3, 10000, 2);
+    cb.configure(10000, 0.5, 5, 10000, 2);  // 10s 窗口，>=5 请求后失败率 >=50% 熔断
     cb.setBackendId("test");
 
-    // 3 次失败应该触发熔断
+    // 4 次失败 + 1 次成功，失败率 80%。旧的连续失败方案会被成功重置；固定窗口应打开。
     cb.reportFailure();
     cb.reportFailure();
-    if (!cb.allowRequest()) { FAIL("still CLOSED after 2 failures"); return; }
-    cb.reportFailure();  // 第 3 次 → OPEN
+    cb.reportFailure();
+    cb.reportFailure();
+    cb.reportSuccess();
 
-    if (cb.allowRequest()) { FAIL("should be OPEN after 3 failures"); return; }
+    if (cb.allowRequest()) { FAIL("should be OPEN at 80% failure rate in one window"); return; }
+    OK();
+}
+
+void test_cb_min_requests_prevents_early_open() {
+    TEST("CircuitBreaker min_requests prevents early open");
+    CircuitBreaker cb;
+    cb.configure(10000, 0.5, 5, 10000, 2);
+    cb.setBackendId("test");
+
+    // 4/4 都失败，但未达到 min_requests=5，不应该提前熔断。
+    cb.reportFailure();
+    cb.reportFailure();
+    cb.reportFailure();
+    cb.reportFailure();
+
+    if (!cb.allowRequest()) { FAIL("should stay CLOSED before min_requests"); return; }
+    OK();
+}
+
+void test_cb_window_rotation_resets_stats() {
+    TEST("CircuitBreaker fixed window resets after duration");
+    CircuitBreaker cb;
+    cb.configure(30, 0.5, 5, 10000, 2);  // 30ms 窗口
+    cb.setBackendId("test");
+
+    // 第一个窗口内失败 4 次，但未达到 min_requests。
+    cb.reportFailure();
+    cb.reportFailure();
+    cb.reportFailure();
+    cb.reportFailure();
+    if (!cb.allowRequest()) { FAIL("should stay CLOSED before window rotation"); return; }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+
+    // 新窗口从 0 开始。1 次成功不会和上一窗口的 4 次失败合并统计。
+    if (!cb.allowRequest()) { FAIL("should allow after rotating to a new window"); return; }
+    cb.reportSuccess();
+    if (!cb.allowRequest()) { FAIL("should remain CLOSED after success in new window"); return; }
+    OK();
+}
+
+void test_cb_below_failure_rate_stays_closed() {
+    TEST("CircuitBreaker below failure rate stays CLOSED");
+    CircuitBreaker cb;
+    cb.configure(10000, 0.5, 5, 10000, 2);
+    cb.setBackendId("test");
+
+    // 2 失败 + 3 成功，失败率 40%，达到 min_requests 但低于阈值。
+    cb.reportFailure();
+    cb.reportFailure();
+    cb.reportSuccess();
+    cb.reportSuccess();
+    cb.reportSuccess();
+
+    if (!cb.allowRequest()) { FAIL("should remain CLOSED below failure-rate threshold"); return; }
     OK();
 }
 
 void test_cb_half_open_and_recover() {
     TEST("CircuitBreaker OPEN -> HALF_OPEN -> CLOSED recovery");
     CircuitBreaker cb;
-    cb.configure(2, 50, 2);  // threshold=2, recovery=50ms
+    cb.configure(10000, 0.5, 2, 50, 2);
     cb.setBackendId("test");
 
-    // 触发熔断
+    // 2/2 失败，失败率 100%，触发熔断。
     cb.reportFailure();
     cb.reportFailure();
+    if (cb.allowRequest()) { FAIL("should be OPEN after failure-rate threshold"); return; }
 
-    // 等待恢复超时
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
 
-    // 应该进入 HALF_OPEN 并放行
+    // 应该进入 HALF_OPEN 并放行。
     if (!cb.allowRequest()) { FAIL("should allow in HALF_OPEN after timeout"); return; }
 
-    // 2 次成功应该恢复
+    // 连续 2 次探活成功后恢复 CLOSED。
     cb.reportSuccess();
     cb.reportSuccess();
-    // 现在应该是 CLOSED，再试应该放行
     if (!cb.allowRequest()) { FAIL("should be CLOSED after recovery"); return; }
     OK();
 }
@@ -195,59 +250,52 @@ void test_cb_half_open_and_recover() {
 void test_cb_half_open_fail_reopens() {
     TEST("CircuitBreaker HALF_OPEN failure -> OPEN");
     CircuitBreaker cb;
-    cb.configure(2, 50, 2);
+    cb.configure(10000, 0.5, 2, 50, 2);
     cb.setBackendId("test");
 
-    // 触发熔断
     cb.reportFailure();
     cb.reportFailure();
+    if (cb.allowRequest()) { FAIL("should be OPEN before recovery timeout"); return; }
 
-    // 等待恢复
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
 
-    // HALF_OPEN 探测
     if (!cb.allowRequest()) { FAIL("should enter HALF_OPEN"); return; }
-    // 探测失败 → 回到 OPEN
     cb.reportFailure();
 
     if (cb.allowRequest()) { FAIL("should be back to OPEN after probe failure"); return; }
     OK();
 }
 
-void test_cb_success_resets_counter() {
-    TEST("CircuitBreaker success resets failure counter");
+void test_cb_closed_recovery_resets_window() {
+    TEST("CircuitBreaker CLOSED recovery resets window stats");
     CircuitBreaker cb;
-    cb.configure(5, 10000, 2);
+    cb.configure(10000, 0.5, 2, 50, 1);
     cb.setBackendId("test");
 
-    // 2 次失败，1 次成功，再 2 次失败（应仍在 CLOSED，因为成功重置了计数）
     cb.reportFailure();
     cb.reportFailure();
-    cb.reportSuccess();  // 重置
-    cb.reportFailure();
-    cb.reportFailure();
+    if (cb.allowRequest()) { FAIL("should be OPEN after 2 failures"); return; }
 
-    if (!cb.allowRequest()) { FAIL("still CLOSED after 2+success+2 failures"); return; }
-    cb.reportFailure();  // 总共 3 次连续失败
-    cb.reportFailure();
-    cb.reportFailure();
-    if (cb.allowRequest()) { FAIL("should be OPEN after 5 continuous"); return; }
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+    if (!cb.allowRequest()) { FAIL("should enter HALF_OPEN"); return; }
+    cb.reportSuccess(); // halfOpenMax=1，恢复 CLOSED，并重置窗口统计
+
+    cb.reportFailure(); // 新窗口只有 1 次失败，未达到 min_requests=2
+    if (!cb.allowRequest()) { FAIL("should remain CLOSED because recovery reset the window"); return; }
     OK();
 }
 
 void test_cb_independent_instances() {
     TEST("CircuitBreaker independent instances");
     CircuitBreaker cb1, cb2;
-    cb1.configure(2, 10000, 2);
-    cb2.configure(2, 10000, 2);
+    cb1.configure(10000, 0.5, 2, 10000, 2);
+    cb2.configure(10000, 0.5, 2, 10000, 2);
     cb1.setBackendId("A");
     cb2.setBackendId("B");
 
-    // 触发 cb1 熔断
     cb1.reportFailure();
     cb1.reportFailure();
 
-    // cb2 应不受影响
     if (!cb2.allowRequest()) { FAIL("cb2 should be independent of cb1"); return; }
     OK();
 }
@@ -267,10 +315,13 @@ int main() {
 
     std::cout << std::endl << "--- CircuitBreaker ---" << std::endl;
     test_cb_initial_state();
-    test_cb_trip_to_open();
+    test_cb_fixed_window_failure_rate_opens();
+    test_cb_min_requests_prevents_early_open();
+    test_cb_window_rotation_resets_stats();
+    test_cb_below_failure_rate_stays_closed();
     test_cb_half_open_and_recover();
     test_cb_half_open_fail_reopens();
-    test_cb_success_resets_counter();
+    test_cb_closed_recovery_resets_window();
     test_cb_independent_instances();
 
     std::cout << std::endl

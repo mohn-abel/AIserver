@@ -58,9 +58,11 @@ bool GatewayConfig::loadFromFile(const std::string& path) {
         // ---- circuit_breaker ----
         if (cfg.contains("circuit_breaker")) {
             auto& cb = cfg["circuit_breaker"];
-            cbFailureThreshold  = cb.value("failure_threshold", 5);
-            cbRecoveryTimeoutMs = cb.value("recovery_timeout_ms", 30000LL);
-            cbHalfOpenMax       = cb.value("half_open_max_requests", 3);
+            cbWindowMs             = cb.value("window_ms", 10000LL);
+            cbFailureRateThreshold = cb.value("failure_rate_threshold", 0.5);
+            cbMinRequests          = cb.value("min_requests", 5);
+            cbRecoveryTimeoutMs    = cb.value("recovery_timeout_ms", 30000LL);
+            cbHalfOpenMax          = cb.value("half_open_max_requests", 3);
         }
 
         // ---- timeout ----

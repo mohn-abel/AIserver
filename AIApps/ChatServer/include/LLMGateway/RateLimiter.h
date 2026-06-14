@@ -11,15 +11,17 @@
 class TokenBucket {
 public:
     // rate: 每秒补充的令牌数  burst: 桶容量上限
-    TokenBucket(double rate = 10.0, double burst = 5.0);
+    // 速率设置10，上限设置5是为了强制请求排队，即最高并发只能有5个请求打向后端LLM
+    TokenBucket(double rate = 10.0, double burst = 5.0); 
 
-    // 尝试消费 1 个令牌，成功返回 true
+    // 尝试消费 1 个令牌，成功返回 true，当请求被放行则需要消耗一个令牌
     bool tryConsume();
 
     // 动态调整速率（用于配置热更新）
     void setRate(double rate, double burst);
 
 private:
+    // 装填令牌桶
     void refill();
 
     double      rate_;              // 令牌/秒

@@ -19,9 +19,10 @@ struct AITool {
 };
 // 结构体：AI 响应中工具调用结果
 struct AIToolCall {
-    std::string toolName;  // 被调用的工具名称
-    json args;  // 工具调用参数（JSON 格式）
-    bool isToolCall = false;  // 标志是否为工具调用
+    std::string toolName;       // 被调用的工具名称
+    json args = json::object(); // 工具调用参数（JSON 格式）
+    bool isToolCall = false;    // 标志是否需要工具调用
+    std::string rawResponse;    // 路由 LLM 的原始响应文本（调试用）
 };
 
 // 配置管理类：负责加载配置、构建提示和解析响应
