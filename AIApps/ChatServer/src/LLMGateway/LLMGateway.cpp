@@ -128,11 +128,11 @@ void LLMGateway::init(const GatewayConfig& config) {
     for (auto& [id, be] : config_.backends) {
         auto& cb = getCircuitBreaker(id);
         cb.setBackendId(id);
-        cb.configure(config_.cbWindowMs,
-                     config_.cbFailureRateThreshold,
-                     config_.cbMinRequests,
+        cb.configure(config_.cbFailureThreshold,
+                     config_.cbFailureResetTimeoutMs,
                      config_.cbRecoveryTimeoutMs,
-                     config_.cbHalfOpenMax);
+                     config_.cbHalfOpenMaxCalls,
+                     config_.cbSuccessThreshold);
     }
 
     std::cout << "[LLMGateway] Initialized: "
@@ -153,11 +153,11 @@ CircuitBreaker& LLMGateway::getCircuitBreaker(const std::string& backendId) {
     auto [it, inserted] = circuitBreakers_.try_emplace(backendId);
     if (inserted) {
         it->second.setBackendId(backendId);
-        it->second.configure(config_.cbWindowMs,
-                             config_.cbFailureRateThreshold,
-                             config_.cbMinRequests,
+        it->second.configure(config_.cbFailureThreshold,
+                             config_.cbFailureResetTimeoutMs,
                              config_.cbRecoveryTimeoutMs,
-                             config_.cbHalfOpenMax);
+                             config_.cbHalfOpenMaxCalls,
+                             config_.cbSuccessThreshold);
     }
     return it->second;
 }
@@ -335,7 +335,7 @@ bool LLMGateway::tryBackend(const BackendConfig& backend,
     CircuitBreaker& cb = getCircuitBreaker(backend.id);
     if (!cb.allowRequest()) {
         std::cout << "[LLMGateway] Backend " << backend.id
-                  << " circuit OPEN" << std::endl;
+                  << " circuit not allowing request" << std::endl;
         return false;
     }
 
@@ -349,19 +349,18 @@ bool LLMGateway::tryBackend(const BackendConfig& backend,
 
     std::string requestStr = reqBody.dump();
 
-    // 4. 执行 HTTP 请求。成功时记录延迟并上报熔断器成功；失败时上报失败。
+    // 4. 执行 HTTP 请求。这里先只拿到 body；最终是否算成功，要等 call()
+    //    完成 JSON 解析后再上报熔断器，避免 HTTP 2xx 但业务响应不可解析被误记成功。
     long long startMs = nowMs();
     try {
         std::string responseBody = executeHttp(backend.apiUrl, backend.apiKey, requestStr);
 
         long long elapsed = nowMs() - startMs;
-        cb.reportSuccess();
 
         result.body         = std::move(responseBody);
         result.backendId    = backend.id;
         result.latencyMs    = elapsed;
 
-        std::cout << "[LLMGateway] " << backend.id << " OK (" << elapsed << "ms)" << std::endl;
         return true;
 
     } catch (const GatewayException&) {
@@ -413,7 +412,11 @@ json LLMGateway::call(const std::string& modelId,
     GatewayResult result;
     if (tryBackend(primary, payload, userId, result)) {
         try {
-            return json::parse(result.body);
+            json parsed = json::parse(result.body);
+            getCircuitBreaker(modelId).reportSuccess();
+            std::cout << "[LLMGateway] " << result.backendId
+                      << " OK (" << result.latencyMs << "ms)" << std::endl;
+            return parsed;
         } catch (...) {
             // HTTP 成功但 JSON 解析失败，也视为该后端失败，继续 fallback。
             getCircuitBreaker(modelId).reportFailure();
@@ -436,7 +439,11 @@ json LLMGateway::call(const std::string& modelId,
 
             if (tryBackend(beIt->second, payload, userId, result)) {
                 try {
-                    return json::parse(result.body);
+                    json parsed = json::parse(result.body);
+                    getCircuitBreaker(fbId).reportSuccess();
+                    std::cout << "[LLMGateway] " << result.backendId
+                              << " OK (" << result.latencyMs << "ms)" << std::endl;
+                    return parsed;
                 } catch (...) {
                     getCircuitBreaker(fbId).reportFailure();
                     // fallback 返回体不是合法 JSON，继续下一个 fallback。
@@ -484,7 +491,7 @@ void LLMGateway::callStreaming(const std::string& modelId,
     // 熔断器检查：OPEN 时直接拒绝，不发起 HTTP。
     CircuitBreaker& cb = getCircuitBreaker(modelId);
     if (!cb.allowRequest()) {
-        throw CircuitOpenException("Circuit breaker open for " + modelId);
+        throw CircuitOpenException("Circuit breaker not allowing request for " + modelId);
     }
 
     long long startMs = nowMs();

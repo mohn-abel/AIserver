@@ -26,11 +26,11 @@
     "per_user": { "requests_per_second": 3, "burst_size": 2 }
   },
   "circuit_breaker": {
-    "window_ms": 10000,
-    "failure_rate_threshold": 0.5,
-    "min_requests": 5,
+    "failure_threshold": 5,
+    "failure_reset_timeout_ms": 10000,
     "recovery_timeout_ms": 30000,
-    "half_open_max_requests": 3
+    "half_open_max_calls": 2,
+    "success_threshold": 2
   },
   "timeout": {
     "connect_timeout_ms": 5000,

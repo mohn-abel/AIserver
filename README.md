@@ -16,8 +16,10 @@
 |------|------|
 | **结构清理** | 移除 `WebApps/GomokuServer` 五子棋游戏应用，聚焦 AI 聊天场景 |
 | **新增线程池** | 新增 `HttpServer/include/utils/ThreadPool` 通用线程池模块，支持异步任务提交 |
+| **异步流式响应** | 聊天接口统一改为 SSE 流式输出，LLM 阻塞调用从 I/O 线程转移到业务线程池 |
 | **AI 模型重构** | 原项目硬编码 4 个独立策略类（AliyunStrategy / DouBaoStrategy / AliyunRAGStrategy / AliyunMcpStrategy），重构为 `GenericAIStrategy`（OpenAI 兼容接口）+ 配置驱动模式 |
 | **模型配置化** | 新增 `model_config.json` 运行时配置，支持动态注册模型和别名，新增 DeepSeek 模型 |
+| **LLM 网关治理** | 新增 `LLMGateway`，统一处理限流、固定时间窗口失败率熔断、超时、非流式 fallback 和流式 SSE 转发 |
 | **框架修复** | 优化 Session 管理、HttpResponse 异步响应、MysqlUtil 封装、DbConnection 连接池等核心模块 |
 | **工程化** | 添加 `.gitignore`、压力测试脚本 `login.lua`、批量注册脚本 `create_users.sh` |
 
@@ -33,7 +35,7 @@ AIserver/
 │   │   │   ├── HttpServer.h           # 服务入口，管理连接/路由/中间件/Session/SSL
 │   │   │   ├── HttpContext.h          # HTTP 协议解析状态机
 │   │   │   ├── HttpRequest.h          # HTTP 请求对象
-│   │   │   └── HttpResponse.h         # HTTP 响应对象（支持异步响应）
+│   │   │   └── HttpResponse.h         # HTTP 响应对象（支持异步响应 / SSE）
 │   │   ├── router/                    # 路由模块
 │   │   │   ├── Router.h               # 静态路由 + 动态路由（正则匹配）
 │   │   │   └── RouterHandler.h        # 路由处理器抽象基类
@@ -71,10 +73,14 @@ AIserver/
 │   │   ├── ImageRecognizer.h          # ONNX Runtime 图像分类识别
 │   │   ├── MQManager.h                # RabbitMQ 消息队列管理
 │   │   └── base64.h                   # Base64 编解码
-│   ├── include/handlers/              # HTTP 请求处理器（13 个 Handler）
+│   ├── include/LLMGateway/            # LLM 出口网关：限流 / 熔断 / fallback / SSE 转发
+│   ├── include/handlers/              # HTTP 请求处理器（含会话删除与流式聊天）
 │   ├── src/                           # 应用实现源码
 │   └── resource/                      # 静态页面与配置文件
-│       ├── model_config.json          # AI 模型配置（运行时加载）
+│       ├── model_config.json          # AI 模型配置（运行时加载，本地私有）
+│       ├── model_config.example.json  # AI 模型配置模板
+│       ├── gateway_config.json        # LLM 网关配置（本地私有）
+│       ├── gateway_config.example.json # LLM 网关配置模板
 │       ├── config.json                # MCP 工具配置
 │       └── *.html                     # 前端页面
 │
@@ -105,9 +111,10 @@ AIserver/
 ### 重构优化内容
 
 - **ThreadPool**：新增通用线程池模块，ChatServer 使用线程池异步执行 AI 推理，避免阻塞 I/O 线程
-- **HttpResponse**：增强异步响应支持（`setDeferred` / `setConnection`），配合线程池实现业务逻辑与网络 I/O 解耦
+- **HttpResponse**：增强异步响应支持（`setDeferred` / `setConnection`），新增 SSE header/chunk/error/end 辅助方法，配合线程池实现业务逻辑与网络 I/O 解耦
 - **MysqlUtil**：新增 `QueryResult` RAII 封装，自动管理 Statement 和 ResultSet 生命周期
 - **DbConnection**：优化连接池健康检查、StmtDeleter 自动清理、UTF-8 编码支持
+- **DbConnectionPool**：改为 LIFO 热连接复用、获取连接超时、锁外健康检查和坏连接替换
 
 ---
 
@@ -120,14 +127,17 @@ AIserver/
 | 功能 | 描述 |
 |------|------|
 | **多模型对话** | 支持阿里云通义千问、DeepSeek 等 OpenAI 兼容 API，运行时切换 |
-| **RAG 检索增强** | 结合阿里云 DashScope 知识库进行增强生成 |
-| **MCP 工具调用** | AI 可自主调用天气查询、时间查询等工具（两阶段推理） |
-| **多轮对话** | 维护每用户每会话的对话历史，支持跨轮次上下文记忆 |
+| **SSE 流式回复** | `/chat/send` 和 `/chat/send-new-session` 统一通过 SSE 推送 OpenAI 风格 chunk，最终以 `[DONE]` 结束 |
+| **LLM 网关治理** | 每用户/每后端限流，固定时间窗口失败率熔断，超时控制，非流式 fallback 降级 |
+| **RAG 检索增强** | 结合阿里云 DashScope 知识库进行增强生成，RAG 流式响应由策略层适配 |
+| **MCP 工具调用** | AI 可自主调用天气查询、时间查询等工具（工具路由 + 工具执行 + 流式最终回答） |
+| **多轮对话** | 维护每用户每会话的对话历史，支持跨轮次上下文记忆和上下文窗口裁剪 |
 | **语音识别** | 集成百度语音 API，PCM 音频转文本（ASR） |
 | **语音合成** | 文本转 MP3 音频，Base64 编码返回（TTS） |
 | **图像识别** | ONNX Runtime + OpenCV，MobileNetV2 模型推理 |
 | **用户系统** | 注册 / 登录 / 登出，基于 Session 的身份认证 |
 | **消息持久化** | RabbitMQ 消息队列异步写入 MySQL，业务与存储解耦 |
+| **会话生命周期** | 支持创建、列表、历史查询和删除会话 |
 
 ### 设计模式
 
@@ -147,24 +157,28 @@ AIStrategy（抽象基类）
 **重构后**：
 - 通过 `GenericAIStrategy` 统一处理所有 OpenAI 兼容 API
 - `StrategyFactory::loadFromConfig()` 从 `model_config.json` 运行时加载模型
-- 支持别名系统（`"1"` → `"aliyun-qwen"`），兼容前端旧接口
-- 新增 DeepSeek 模型支持仅需在 JSON 中添加一行配置
+- 支持别名系统，配置 `aliases` 后可把旧 ID 映射到新模型 ID
+- 新增 DeepSeek 等 OpenAI 兼容模型只需在 JSON 中添加一组配置
 
-### 异步消息架构
+### 异步流式消息架构
 
 ```
 用户消息 → ChatSendHandler（I/O 线程）
     │
-    ├── 设置 Deferred Response（不阻塞 I/O 线程）
-    ├── 投递到业务 ThreadPool → 异步调用 AI API
-    ├── AI 响应后通过 runInLoop() 回写 HTTP 响应
-    └── 同时投递 SQL INSERT 到 RabbitMQ
+    ├── setDeferred()，当前栈帧不发送普通响应
+    ├── 投递到业务 ThreadPool，避免阻塞 muduo I/O 线程
+    ├── AIHelper 选择模型并构造请求
+    ├── LLMGateway 执行限流 / 熔断 / 超时 / SSE 转发
+    ├── 模型 token 通过 runInLoop() 回写为 SSE data chunk
+    └── 完整用户问题和最终 AI 回复投递 SQL INSERT 到 RabbitMQ
               │
               ▼
      RabbitMQThreadPool（2 Worker 消费）
               │
               └── 异步写入 MySQL chat_message 表
 ```
+
+非流式网关调用支持按 `gateway_config.json` fallback 到备用后端；流式调用不做 fallback，因为部分 token 一旦发给前端就无法安全回滚。
 
 ---
 
@@ -247,7 +261,8 @@ cd build-release && ./http_server -p 8080   # 指定端口
 
 ### 配置
 
-- **AI 模型**：编辑 `AIApps/ChatServer/resource/model_config.json`，配置 API Key 和端点
+- **AI 模型**：复制 `AIApps/ChatServer/resource/model_config.example.json` 为 `model_config.json`，配置 API Key 和端点
+- **LLM 网关**：复制 `AIApps/ChatServer/resource/gateway_config.example.json` 为 `gateway_config.json`，配置后端、限流、固定窗口熔断、超时和 fallback 路由
 - **MCP 工具**：编辑 `AIApps/ChatServer/resource/config.json`
 - **百度语音**：设置环境变量 `BAIDU_CLIENT_ID` / `BAIDU_CLIENT_SECRET`
 - **数据库**：确保 MySQL 中存在 `ChatHttpServer` 数据库及 `users`、`chat_message` 表
@@ -278,10 +293,11 @@ cd build-release && ./http_server -p 8080   # 指定端口
 
 | 路径 | 方法 | 说明 |
 |------|------|------|
-| `/chat/send` | POST | 发送消息，AI 回复 |
-| `/chat/send-new-session` | POST | 创建新会话并发送消息 |
+| `/chat/send` | POST | 发送消息，SSE 流式返回 AI 回复 |
+| `/chat/send-new-session` | POST | 创建新会话并发送消息，首个 SSE chunk 返回 `sessionId` |
 | `/chat/history` | POST | 查询历史消息 |
 | `/chat/sessions` | GET | 获取用户会话列表 |
+| `/chat/delete-session` | POST | 删除指定会话及其历史消息 |
 | `/chat/tts` | POST | 语音合成（文字转语音） |
 
 ### 上传接口
@@ -298,16 +314,58 @@ curl -v -X POST http://127.0.0.1:8080/login \
   -H "Content-Type: application/json" \
   -d '{"username":"test123","password":"123456"}'
 
-# 发送消息（需携带 Session Cookie）
-curl -X POST http://127.0.0.1:8080/chat/send \
+# 发送消息（SSE 流式返回，需携带 Session Cookie）
+curl -N -X POST http://127.0.0.1:8080/chat/send \
   -H "Content-Type: application/json" \
   -H "Cookie: sessionId=xxx" \
-  -d '{"sessionId":"xxx","content":"你好"}'
+  -d '{"sessionId":"chat-session-id","question":"你好","modelType":"aliyun-qwen","enableTools":true}'
+
+# 返回形态示例
+# data: {"choices":[{"delta":{"content":"你好"},"index":0}],"id":"chatcmpl-stream","object":"chat.completion.chunk"}
+# data: [DONE]
+
+# 新建会话并发送消息，首帧包含 sessionId
+curl -N -X POST http://127.0.0.1:8080/chat/send-new-session \
+  -H "Content-Type: application/json" \
+  -H "Cookie: sessionId=xxx" \
+  -d '{"question":"你好","modelType":"aliyun-qwen","enableTools":false}'
+
+# 删除会话
+curl -X POST http://127.0.0.1:8080/chat/delete-session \
+  -H "Content-Type: application/json" \
+  -H "Cookie: sessionId=xxx" \
+  -d '{"sessionId":"chat-session-id"}'
 ```
 
 ---
 
-## 六、压测
+## 六、测试与压测
+
+### 网关单元测试
+
+```bash
+g++ -std=c++17 -pthread \
+  -IAIApps/ChatServer/include -IHttpServer/include \
+  -o /tmp/test_gateway_current \
+  AIApps/ChatServer/tests/test_gateway.cpp \
+  AIApps/ChatServer/src/LLMGateway/RateLimiter.cpp \
+  AIApps/ChatServer/src/LLMGateway/CircuitBreaker.cpp
+/tmp/test_gateway_current
+```
+
+覆盖 TokenBucket、两级 RateLimiter、固定时间窗口失败率 CircuitBreaker、`min_requests`、窗口轮转、HALF_OPEN 恢复和并发访问。
+
+### 网关集成测试
+
+需先启动服务并准备测试用户：
+
+```bash
+AIApps/ChatServer/tests/test_gateway.sh localhost:8080
+```
+
+脚本会登录获取 Cookie，调用 SSE 聊天接口并校验 `data:` 事件和 `[DONE]`，再检查历史接口和并发 burst 请求。fallback 路由仍需按脚本提示修改配置后手工观察日志。
+
+### 压测
 
 项目提供 wrk Lua 脚本用于压力测试。
 
@@ -359,7 +417,8 @@ wrk -t4 -c100 -d30s -s login.lua http://127.0.0.1:8080/login
 - 基于开源项目 [Kama-HTTPServer](https://github.com/youngyangyang04/Kama-HTTPServer) / [CppAIService](https://github.com/youngyangyang04/CppAIService) 重构而来
 - HttpServer 框架基于 Muduo Reactor 多线程模型，单机 QPS 可达 **6 万+**
 - 重构 AI 模型系统：从硬编码策略 → 配置驱动 `GenericAIStrategy`，新增 DeepSeek 模型支持
-- 新增 `ThreadPool` 通用线程池模块，配合异步响应实现业务逻辑与网络 I/O 解耦
+- 新增 `LLMGateway`：两级限流、固定时间窗口失败率熔断、超时、非流式 fallback、流式 SSE 转发
+- 新增 `ThreadPool` 通用线程池模块，配合 deferred response 和 SSE 实现业务逻辑与网络 I/O 解耦
 - 通过 RabbitMQ 消息队列实现消息异步持久化
 - 综合运用策略模式、工厂模式、单例模式、连接池模式等设计模式
 - 涵盖网络编程、多线程、设计模式、数据库、消息队列、AI 集成等多方面知识点

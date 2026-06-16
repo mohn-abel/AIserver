@@ -58,11 +58,14 @@ bool GatewayConfig::loadFromFile(const std::string& path) {
         // ---- circuit_breaker ----
         if (cfg.contains("circuit_breaker")) {
             auto& cb = cfg["circuit_breaker"];
-            cbWindowMs             = cb.value("window_ms", 10000LL);
-            cbFailureRateThreshold = cb.value("failure_rate_threshold", 0.5);
-            cbMinRequests          = cb.value("min_requests", 5);
-            cbRecoveryTimeoutMs    = cb.value("recovery_timeout_ms", 30000LL);
-            cbHalfOpenMax          = cb.value("half_open_max_requests", 3);
+            // 新字段：连续失败次数 + 时间衰减窗口。
+            // 兼容旧字段：min_requests -> failure_threshold，window_ms -> failure_reset_timeout_ms，
+            // half_open_max_in_flight -> half_open_max_calls，half_open_max_requests -> success_threshold。
+            cbFailureThreshold      = cb.value("failure_threshold", cb.value("min_requests", 5));
+            cbFailureResetTimeoutMs = cb.value("failure_reset_timeout_ms", cb.value("window_ms", 10000LL));
+            cbRecoveryTimeoutMs     = cb.value("recovery_timeout_ms", 30000LL);
+            cbHalfOpenMaxCalls      = cb.value("half_open_max_calls", cb.value("half_open_max_in_flight", 2));
+            cbSuccessThreshold      = cb.value("success_threshold", cb.value("half_open_max_requests", 2));
         }
 
         // ---- timeout ----

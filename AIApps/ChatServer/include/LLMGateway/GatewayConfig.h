@@ -25,12 +25,12 @@ struct GatewayConfig {
     double userRps   = 3.0;
     double userBurst = 2.0;
 
-    // 熔断器参数：固定时间窗口内达到最小请求数后，按失败率判断是否打开熔断
-    long long cbWindowMs             = 10000;
-    double    cbFailureRateThreshold = 0.5;
-    int       cbMinRequests          = 5;
-    long long cbRecoveryTimeoutMs    = 30000;
-    int       cbHalfOpenMax          = 3;
+    // 熔断器参数：连续失败次数阈值 + 失败计数时间衰减窗口
+    int       cbFailureThreshold      = 5;
+    long long cbFailureResetTimeoutMs = 10000;
+    long long cbRecoveryTimeoutMs     = 30000;
+    int       cbHalfOpenMaxCalls      = 2;
+    int       cbSuccessThreshold      = 2;
 
     // 超时参数
     long long connectTimeoutMs = 5000;
