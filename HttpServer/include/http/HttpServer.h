@@ -40,19 +40,22 @@ public:
                const std::string& name,
                bool useSSL = false,
                muduo::net::TcpServer::Option option = muduo::net::TcpServer::kNoReusePort);
-    
+    // 配置IO线程数量
+    // numThreads = 0,只使用 main EventLoop 线程，单线程处理连接和 I/O
+    // numThreads = 1,main EventLoop 负责 accept，新建 1 个 I/O 线程处理连接
+    // numThreads = N,main EventLoop 负责 accept，新建 N 个 I/O 线程，连接会分配到这些线程上
     void setThreadNum(int numThreads)
     {
         server_.setThreadNum(numThreads);
     }
 
     void start();
-
+    // 获取当前服务器主循环mainloop
     muduo::net::EventLoop* getLoop() const 
     { 
-        return server_.getLoop(); 
+        return server_.getLoop();  
     }
-
+    // 设置自定义回调函数
     void setHttpCallback(const HttpCallback& cb)
     {
         httpCallback_ = cb;
