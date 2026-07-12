@@ -72,7 +72,7 @@ void HttpResponse::sendJsonResponse(const muduo::net::TcpConnectionPtr& conn,
 void HttpResponse::sendSSEHeaders(const muduo::net::TcpConnectionPtr& conn) {
     if(!conn || !conn->connected()) return;
 
-    HttpResponse resp(false);
+    HttpResponse resp(true);
     resp.setVersion("HTTP/1.1");
     resp.setStatusCode(HttpResponse::k200Ok);
     resp.setStatusMessage("OK");

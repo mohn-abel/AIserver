@@ -1,5 +1,5 @@
 #pragma once
-#include <vector>
+#include <deque>
 #include <mutex>
 #include <condition_variable>
 #include <memory>
@@ -20,10 +20,11 @@ struct PoolDeleter {
     void operator()(DbConnection* conn) const;
 };
 
-// 连接条目：持有连接 + 最后归还时间戳
+// 连接条目：持有连接 + 业务归还时间 + 后台探活时间
 struct ConnEntry {
     std::unique_ptr<DbConnection, PoolDeleter> conn;
     std::chrono::steady_clock::time_point lastReturned;
+    std::chrono::steady_clock::time_point lastChecked;
 };
 
 class DbConnectionPool
@@ -77,14 +78,15 @@ private:
     std::string                               user_;
     std::string                               password_;
     std::string                               database_;
-    // vector 尾进尾出 = LIFO 栈，热连接优先复用
-    std::vector<ConnEntry>                    connections_;
+    // deque 头部是冷连接，尾部是热连接；业务按 LIFO 从尾部复用
+    std::deque<ConnEntry>                     connections_;
     std::mutex                                mutex_;
     std::condition_variable                   cv_;
     bool                                      initialized_ = false;
     std::atomic<bool>                         stop_{false};
     std::thread                               checkThread_;
     std::chrono::seconds                      idleThreshold_{60};   // 空闲超过此阈值才探活
+    std::chrono::seconds                      healthCheckInterval_{60}; // 同一空闲连接的最小探活间隔
     int                                       maxCheckPerRound_{5}; // 每轮最多检查数
     std::chrono::milliseconds                 acquireTimeout_{5000};// 获取连接的最大等待时间，超时抛异常
 };

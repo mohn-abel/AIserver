@@ -105,7 +105,7 @@ AIserver/
 | **中间件模块** | 中间件链模式，请求前置处理 + 响应后置处理，内置 CORS 跨域中间件 |
 | **会话管理** | 基于 Cookie + Session 的用户状态管理，多线程安全访问 |
 | **SSL 模块** | 基于 OpenSSL + 内存 BIO 的 HTTPS 加密传输 |
-| **数据库模块** | MySQL 连接池（`DbConnectionPool`），连接复用，参数化查询防注入 |
+| **数据库模块** | MySQL 连接池（`DbConnectionPool`），LIFO 热连接复用，参数化查询防注入 |
 | **线程池** | 通用线程池（`ThreadPool`），支持异步任务提交（**新增**） |
 
 ### 重构优化内容
@@ -114,7 +114,7 @@ AIserver/
 - **HttpResponse**：增强异步响应支持（`setDeferred` / `setConnection`），新增 SSE header/chunk/error/end 辅助方法，配合线程池实现业务逻辑与网络 I/O 解耦
 - **MysqlUtil**：新增 `QueryResult` RAII 封装，自动管理 Statement 和 ResultSet 生命周期
 - **DbConnection**：优化连接池健康检查、StmtDeleter 自动清理、UTF-8 编码支持
-- **DbConnectionPool**：改为 LIFO 热连接复用、获取连接超时、锁外健康检查和坏连接替换
+- **DbConnectionPool**：基于 `deque` 维护头冷尾热的 LIFO 连接池，支持双时间戳健康检查、锁外 `ping`、坏连接替换和获取超时
 
 ---
 

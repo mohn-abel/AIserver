@@ -17,9 +17,11 @@ void PoolDeleter::operator()(DbConnection* conn) const
 void DbConnectionPool::returnConnection(DbConnection* conn)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    // LIFO: 归还到 vector 尾部，打上时间戳
+    auto now = std::chrono::steady_clock::now();
+    // LIFO: 业务归还到 deque 尾部，尾部保持为热连接区域
     connections_.push_back({std::unique_ptr<DbConnection, PoolDeleter>(conn, PoolDeleter{this}),
-                            std::chrono::steady_clock::now()});
+                            now,
+                            now});
     cv_.notify_one();
 }
 
@@ -44,7 +46,8 @@ void DbConnectionPool::init(const std::string& host,
 
     for (size_t i = 0; i < poolSize; ++i)
     {
-        connections_.push_back({createConnection(), std::chrono::steady_clock::now()});
+        auto now = std::chrono::steady_clock::now();
+        connections_.push_back({createConnection(), now, now});
     }
 
     initialized_ = true;
@@ -89,7 +92,7 @@ std::unique_ptr<DbConnection, PoolDeleter> DbConnectionPool::spawnReplacement()
     return createConnection();
 }
 
-// ── 获取连接（LIFO：总是取栈顶热连接）─────────────────────────
+// ── 获取连接（LIFO：总是取尾部热连接）─────────────────────────
 
 std::unique_ptr<DbConnection, PoolDeleter> DbConnectionPool::getConnection()
 {
@@ -142,7 +145,8 @@ std::unique_ptr<DbConnection, PoolDeleter> DbConnectionPool::getConnection()
         LOG_ERROR << "Failed to get connection: " << e.what();
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            connections_.push_back({std::move(conn), std::chrono::steady_clock::now()});
+            auto now = std::chrono::steady_clock::now();
+            connections_.push_back({std::move(conn), now, now});
             cv_.notify_one();
         }
         throw;
@@ -163,33 +167,37 @@ void DbConnectionPool::checkConnections()
 
         try
         {
-            auto now = std::chrono::steady_clock::now();
             int checked = 0;
-
-            // 从栈底（index 0，idle 最长）向栈顶扫描，swap+pop 取出超时连接
             size_t i = 0;
-            while (i < connections_.size() && checked < maxCheckPerRound_ && !stop_)
+
+            // deque 头部是冷连接，尾部是热连接；健康检查只扫描冷端。
+            while (checked < maxCheckPerRound_ && !stop_)
             {
                 ConnEntry entry;
+                size_t insertIndex = 0;
+
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
                     if (i >= connections_.size()) break;
 
+                    auto now = std::chrono::steady_clock::now();
                     auto idle = now - connections_[i].lastReturned;
                     if (idle < idleThreshold_)
                     {
-                        ++i;       // 这个连接还热，跳过
+                        break;  // 冷端都不够冷，后面的连接更不需要探活
+                    }
+
+                    auto sinceCheck = now - connections_[i].lastChecked;
+                    if (sinceCheck < healthCheckInterval_)
+                    {
+                        ++i;    // 仍是冷连接，但刚探活过，继续看下一个冷连接
                         continue;
                     }
 
-                    // 取出 connections_[i]：与尾部交换后 pop_back
+                    // 保序摘出待检查连接，不触碰尾部热连接。
+                    insertIndex = i;
                     entry = std::move(connections_[i]);
-                    if (i != connections_.size() - 1)
-                    {
-                        connections_[i] = std::move(connections_.back());
-                    }
-                    connections_.pop_back();
-                    // 不递增 i，因为现在 connections_[i] 是之前尾部的元素
+                    connections_.erase(connections_.begin() + i);
                 }
 
                 // 锁外 ping，不阻塞业务线程
@@ -209,11 +217,17 @@ void DbConnectionPool::checkConnections()
 
                 {
                     std::lock_guard<std::mutex> lock(mutex_);
-                    entry.lastReturned = std::chrono::steady_clock::now();
-                    connections_.push_back(std::move(entry));
+                    entry.lastChecked = std::chrono::steady_clock::now();
+                    if (insertIndex > connections_.size())
+                    {
+                        insertIndex = connections_.size();
+                    }
+                    connections_.insert(connections_.begin() + insertIndex, std::move(entry));
                     cv_.notify_one();
                 }
+
                 ++checked;
+                ++i;
             }
         }
         catch (const std::exception& e)
