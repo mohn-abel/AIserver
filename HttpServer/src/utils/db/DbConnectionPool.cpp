@@ -134,7 +134,9 @@ std::unique_ptr<DbConnection, PoolDeleter> DbConnectionPool::getConnection()
             catch (const std::exception& e)
             {
                 LOG_ERROR << "Reconnect failed: " << e.what() << ", replacing with new connection";
-                conn = spawnReplacement();   // 坏连接被 unique_ptr 析构，替换为新连接
+                // PoolDeleter returns connections to the pool; discard the failed one instead.
+                delete conn.release();
+                conn = spawnReplacement();
             }
         }
 
@@ -143,6 +145,7 @@ std::unique_ptr<DbConnection, PoolDeleter> DbConnectionPool::getConnection()
     catch (const std::exception& e)
     {
         LOG_ERROR << "Failed to get connection: " << e.what();
+        if (conn)
         {
             std::lock_guard<std::mutex> lock(mutex_);
             auto now = std::chrono::steady_clock::now();
@@ -211,6 +214,8 @@ void DbConnectionPool::checkConnections()
                     catch (const std::exception& e)
                     {
                         LOG_ERROR << "Reconnect failed, replacing: " << e.what();
+                        // PoolDeleter returns connections to the pool; discard the failed one instead.
+                        delete entry.conn.release();
                         entry.conn = spawnReplacement();
                     }
                 }

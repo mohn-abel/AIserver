@@ -9,6 +9,14 @@ AIApps/ChatServer/tests/test_gateway
 # 含密钥的私有配置（仅提交 *.example.json 模板）
 AIApps/ChatServer/resource/gateway_config.json
 AIApps/ChatServer/resource/model_config.json
+
+# 个人文字文档（不提交，仅保留本地）：调试学习、项目改动详解/故事线、思考增强版、AIserving
+/AIserving.docx
+/AIserving.txt
+/AIserving_思考增强版.md
+/调试学习.md
+/项目修改故事线.md
+/项目改动详解.md
 *.swp
 *.swo
 *.swk
