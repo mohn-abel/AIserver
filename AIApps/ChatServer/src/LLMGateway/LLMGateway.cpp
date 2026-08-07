@@ -42,6 +42,32 @@ namespace {
         return body.size() > 200 ? body.substr(0, 200) + "..." : body;
     }
 
+    BackendErrorClass classifyBackendHttpStatus(long httpCode) {
+        if (httpCode == 401 || httpCode == 403) {
+            return BackendErrorClass::kAuth; // 权限问题错误
+        }
+        if (httpCode == 429) {
+            return BackendErrorClass::kRateLimited; // LLM后端限流
+        }
+        if (httpCode == 408 || httpCode >= 500) {
+            return BackendErrorClass::kBackendUnavailable; // 后端问题不可用
+        }
+        if (httpCode >= 400 && httpCode < 500) {
+            return BackendErrorClass::kClientRequest; // 客户端请求问题
+        }
+        return BackendErrorClass::kUnknown;
+    }
+
+    BackendHttpException makeBackendHttpException(long httpCode, const std::string& body) {
+        BackendErrorClass errorClass = classifyBackendHttpStatus(httpCode);
+        return BackendHttpException(
+            static_cast<int>(httpCode),
+            errorClass,
+            "Backend HTTP " + std::to_string(httpCode) +
+                " [" + backendErrorClassName(errorClass) + "]: " +
+                extractBackendError(body));
+    }
+
     // 流式回调上下文。curl 的写回调可能拿到半行数据，所以需要 buffer 缓存。
     // raw 用于在非 SSE 错误响应时提取后端错误；正常流式数据仍然会保留在 raw 中。
     struct StreamContext {
@@ -223,10 +249,9 @@ std::string LLMGateway::executeHttp(const std::string& url,
             "curl_easy_perform() failed: " + std::string(errStr));
     }
 
-    // 传输层成功（curl OK）不等于业务成功：HTTP 4xx/5xx 是后端业务错误（欠费/鉴权/限流等）
+    // 传输层成功（curl OK）不等于业务成功：HTTP 4xx/5xx 需要按语义分类。
     if (httpCode >= 400) {
-        throw BackendException(
-            "Backend HTTP " + std::to_string(httpCode) + ": " + extractBackendError(readBuffer));
+        throw makeBackendHttpException(httpCode, readBuffer);
     }
 
     return readBuffer;
@@ -294,11 +319,10 @@ void LLMGateway::executeHttpStreaming(const std::string& url,
             "curl_easy_perform() failed: " + std::string(errStr));
     }
 
-    // HTTP 4xx/5xx：鉴权、欠费、参数错误、后端限流等业务失败。
+    // HTTP 4xx/5xx：鉴权、参数错误、后端限流等失败需要按语义分类。
     // 这些失败通常不是正常 token 流，需要抛出给上层转成前端 SSE error。
     if (httpCode >= 400) {
-        throw BackendException(
-            "Backend HTTP " + std::to_string(httpCode) + ": " + extractBackendError(ctx.raw));
+        throw makeBackendHttpException(httpCode, ctx.raw);
     }
 
     // 状态码 200 但整个响应没有任何 data: 行：通常说明后端返回了普通 JSON 错误，
@@ -363,8 +387,20 @@ bool LLMGateway::tryBackend(const BackendConfig& backend,
 
         return true;
 
+    } catch (const BackendHttpException& e) {
+        if (e.countsForCircuitBreaker()) {
+            cb.reportFailure();
+        }
+        std::cout << "[LLMGateway] " << backend.id
+                  << " failed (http=" << e.statusCode()
+                  << ", class=" << backendErrorClassName(e.errorClass()) << ")"
+                  << std::endl;
+        if (!e.shouldTryFallback()) {
+            throw;
+        }
+        return false;
     } catch (const GatewayException&) {
-        // 单个后端失败时不向外抛，交给 call() 决定是否 fallback。
+        // 网络/超时/解析类网关异常仍视为后端可用性失败。
         cb.reportFailure();
         std::cout << "[LLMGateway] " << backend.id
                   << " failed (gateway exception)" << std::endl;
@@ -501,8 +537,13 @@ void LLMGateway::callStreaming(const std::string& modelId,
         cb.reportSuccess();
         std::cout << "[LLMGateway] Streaming " << modelId
                   << " OK (" << elapsed << "ms)" << std::endl;
+    } catch (const BackendHttpException& e) {
+        if (e.countsForCircuitBreaker()) {
+            cb.reportFailure();
+        }
+        throw;  // 流式不走 fallback，上层 handler 会把异常转成 SSE error。
     } catch (const GatewayException&) {
         cb.reportFailure();
-        throw;  // 流式不走 fallback，上层 handler 会把异常转成 SSE error。
+        throw;
     }
 }

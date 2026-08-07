@@ -1,5 +1,27 @@
 #include "../../include/http/HttpResponse.h"
 
+namespace
+{
+
+std::string makeChunkedFrame(const std::string& payload)
+{
+    char sizeLine[32];
+    snprintf(sizeLine, sizeof sizeLine, "%zx\r\n", payload.size());
+
+    std::string frame(sizeLine);
+    frame.append(payload);
+    frame.append("\r\n");
+    return frame;
+}
+
+const char* lastChunk()
+{
+    return "0\r\n\r\n";
+}
+
+}
+
+
 namespace http
 {
 
@@ -72,12 +94,13 @@ void HttpResponse::sendJsonResponse(const muduo::net::TcpConnectionPtr& conn,
 void HttpResponse::sendSSEHeaders(const muduo::net::TcpConnectionPtr& conn) {
     if(!conn || !conn->connected()) return;
 
-    HttpResponse resp(true);
+    HttpResponse resp(false);
     resp.setVersion("HTTP/1.1");
     resp.setStatusCode(HttpResponse::k200Ok);
     resp.setStatusMessage("OK");
     resp.setContentType("text/event-stream");
     resp.addHeader("Cache-Control", "no-cache");
+    resp.addHeader("Transfer-Encoding", "chunked");
 
     muduo::net::Buffer buf;
     resp.appendToBuffer(&buf);
@@ -85,20 +108,20 @@ void HttpResponse::sendSSEHeaders(const muduo::net::TcpConnectionPtr& conn) {
 }
 
 void HttpResponse::sendSSEChunk(const muduo::net::TcpConnectionPtr& conn, const std::string& data) {
-    std::string chunk = "data: " + data + "\n\n";
-    conn->send(chunk);
+    std::string payload = "data: " + data + "\n\n";
+    conn->send(makeChunkedFrame(payload));
 }
 
 void HttpResponse::sendSSEError(const muduo::net::TcpConnectionPtr& conn, const std::string& errorJson) {
-    std::string error = "data: " + errorJson + "\n\n";
-    conn->send(error);
-    conn->shutdown();
+    std::string payload = "data: " + errorJson + "\n\n";
+    conn->send(makeChunkedFrame(payload));
+    conn->send(lastChunk());
 }
 
 void HttpResponse::sendSSEEnd(const muduo::net::TcpConnectionPtr& conn) {
-    std::string end = "data: [DONE]\n\n";
-    conn->send(end);
-    conn->shutdown();
+    std::string payload = "data: [DONE]\n\n";
+    conn->send(makeChunkedFrame(payload));
+    conn->send(lastChunk());
 }
 }
 // namespace http

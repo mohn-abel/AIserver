@@ -33,6 +33,53 @@ public:
     explicit BackendException(const std::string& msg) : GatewayException(msg) {}
 };
 
+// 后端 HTTP 错误语义。网关治理关心的是事件语义，不是裸状态码。
+enum class BackendErrorClass {
+    kClientRequest,      // 400/404/422: 请求体、模型名或路径问题
+    kAuth,               // 401/403: 密钥、权限或账号问题
+    kRateLimited,        // 429: 远端限流/过载
+    kBackendUnavailable, // 408/5xx: 远端不可用或超时
+    kUnknown
+};
+
+inline const char* backendErrorClassName(BackendErrorClass c) {
+    switch (c) {
+        case BackendErrorClass::kClientRequest:      return "client_request";
+        case BackendErrorClass::kAuth:               return "auth";
+        case BackendErrorClass::kRateLimited:        return "rate_limited";
+        case BackendErrorClass::kBackendUnavailable: return "backend_unavailable";
+        case BackendErrorClass::kUnknown:            return "unknown";
+    }
+    return "unknown";
+}
+
+class BackendHttpException : public BackendException {
+public:
+    BackendHttpException(int statusCode,
+                         BackendErrorClass errorClass,
+                         const std::string& msg)
+        : BackendException(msg),
+          statusCode_(statusCode),
+          errorClass_(errorClass) {}
+
+    int statusCode() const { return statusCode_; }
+    BackendErrorClass errorClass() const { return errorClass_; }
+
+    bool countsForCircuitBreaker() const {
+        return errorClass_ == BackendErrorClass::kRateLimited ||
+               errorClass_ == BackendErrorClass::kBackendUnavailable ||
+               errorClass_ == BackendErrorClass::kUnknown;
+    }
+
+    bool shouldTryFallback() const {
+        return countsForCircuitBreaker();
+    }
+
+private:
+    int statusCode_;
+    BackendErrorClass errorClass_;
+};
+
 // ---------------------------------------------------------------------------
 // 熔断器状态
 // ---------------------------------------------------------------------------
