@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <chrono>
@@ -117,6 +118,7 @@ struct BackendConfig {
 struct GatewayResult {
     std::string body;          // 响应 JSON 字符串
     std::string backendId;     // 实际处理请求的后端 ID
+    std::uint64_t circuitPermit = 0;
     bool        fallbackUsed = false;
     long long   latencyMs = 0;
 };

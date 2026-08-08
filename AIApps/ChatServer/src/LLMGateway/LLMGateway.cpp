@@ -355,23 +355,23 @@ bool LLMGateway::tryBackend(const BackendConfig& backend,
         return false;
     }
 
-    // 2. 熔断器检查：OPEN 状态直接跳过该后端，HALF_OPEN/CLOSED 由熔断器决定。
-    CircuitBreaker& cb = getCircuitBreaker(backend.id);
-    if (!cb.allowRequest()) {
-        std::cout << "[LLMGateway] Backend " << backend.id
-                  << " circuit not allowing request" << std::endl;
-        return false;
-    }
-
-    // 3. 准备请求体。fallback 后端可能和主后端使用同一种 OpenAI 兼容格式，
+    // 2. 准备请求体。fallback 后端可能和主后端使用同一种 OpenAI 兼容格式，
     //    但实际模型名不同，所以只在 payload 原本有 "model" 字段时替换它。
     //    RAG 这类没有 "model" 字段的请求体不会被这里改写。
     json reqBody = payload;
     if (!backend.modelName.empty() && reqBody.contains("model")) {
         reqBody["model"] = backend.modelName;
     }
-
     std::string requestStr = reqBody.dump();
+
+    // 3. 熔断器检查：permit 将本次请求绑定到放行时的状态机周期。
+    CircuitBreaker& cb = getCircuitBreaker(backend.id);
+    auto permit = cb.allowRequest();
+    if (!permit) {
+        std::cout << "[LLMGateway] Backend " << backend.id
+                  << " circuit not allowing request" << std::endl;
+        return false;
+    }
 
     // 4. 执行 HTTP 请求。这里先只拿到 body；最终是否算成功，要等 call()
     //    完成 JSON 解析后再上报熔断器，避免 HTTP 2xx 但业务响应不可解析被误记成功。
@@ -383,13 +383,17 @@ bool LLMGateway::tryBackend(const BackendConfig& backend,
 
         result.body         = std::move(responseBody);
         result.backendId    = backend.id;
+        result.circuitPermit = *permit;
         result.latencyMs    = elapsed;
 
         return true;
 
     } catch (const BackendHttpException& e) {
         if (e.countsForCircuitBreaker()) {
-            cb.reportFailure();
+            cb.reportFailure(*permit);
+        } else {
+            // 非可用性错误证明后端可达，不应占住 HALF_OPEN 探活名额。
+            cb.reportSuccess(*permit);
         }
         std::cout << "[LLMGateway] " << backend.id
                   << " failed (http=" << e.statusCode()
@@ -401,7 +405,7 @@ bool LLMGateway::tryBackend(const BackendConfig& backend,
         return false;
     } catch (const GatewayException&) {
         // 网络/超时/解析类网关异常仍视为后端可用性失败。
-        cb.reportFailure();
+        cb.reportFailure(*permit);
         std::cout << "[LLMGateway] " << backend.id
                   << " failed (gateway exception)" << std::endl;
         return false;
@@ -449,13 +453,13 @@ json LLMGateway::call(const std::string& modelId,
     if (tryBackend(primary, payload, userId, result)) {
         try {
             json parsed = json::parse(result.body);
-            getCircuitBreaker(modelId).reportSuccess();
+            getCircuitBreaker(modelId).reportSuccess(result.circuitPermit);
             std::cout << "[LLMGateway] " << result.backendId
                       << " OK (" << result.latencyMs << "ms)" << std::endl;
             return parsed;
         } catch (...) {
             // HTTP 成功但 JSON 解析失败，也视为该后端失败，继续 fallback。
-            getCircuitBreaker(modelId).reportFailure();
+            getCircuitBreaker(modelId).reportFailure(result.circuitPermit);
         }
     }
 
@@ -476,12 +480,12 @@ json LLMGateway::call(const std::string& modelId,
             if (tryBackend(beIt->second, payload, userId, result)) {
                 try {
                     json parsed = json::parse(result.body);
-                    getCircuitBreaker(fbId).reportSuccess();
+                    getCircuitBreaker(fbId).reportSuccess(result.circuitPermit);
                     std::cout << "[LLMGateway] " << result.backendId
                               << " OK (" << result.latencyMs << "ms)" << std::endl;
                     return parsed;
                 } catch (...) {
-                    getCircuitBreaker(fbId).reportFailure();
+                    getCircuitBreaker(fbId).reportFailure(result.circuitPermit);
                     // fallback 返回体不是合法 JSON，继续下一个 fallback。
                 }
             }
@@ -524,26 +528,32 @@ void LLMGateway::callStreaming(const std::string& modelId,
     // 后端级限流：流式无 fallback，所以只检查主后端 modelId。
     rateLimiter_.checkBackendAllowed(modelId);
 
+    // 在申请 permit 前完成本地序列化，避免本地异常遗留 HALF_OPEN 名额。
+    std::string requestBody = payload.dump();
+
     // 熔断器检查：OPEN 时直接拒绝，不发起 HTTP。
     CircuitBreaker& cb = getCircuitBreaker(modelId);
-    if (!cb.allowRequest()) {
+    auto permit = cb.allowRequest();
+    if (!permit) {
         throw CircuitOpenException("Circuit breaker not allowing request for " + modelId);
     }
 
     long long startMs = nowMs();
     try {
-        executeHttpStreaming(primaryUrl, primaryKey, payload.dump(), onChunk, extraHeaders);
+        executeHttpStreaming(primaryUrl, primaryKey, requestBody, onChunk, extraHeaders);
         long long elapsed = nowMs() - startMs;
-        cb.reportSuccess();
+        cb.reportSuccess(*permit);
         std::cout << "[LLMGateway] Streaming " << modelId
                   << " OK (" << elapsed << "ms)" << std::endl;
     } catch (const BackendHttpException& e) {
         if (e.countsForCircuitBreaker()) {
-            cb.reportFailure();
+            cb.reportFailure(*permit);
+        } else {
+            cb.reportSuccess(*permit);
         }
         throw;  // 流式不走 fallback，上层 handler 会把异常转成 SSE error。
     } catch (const GatewayException&) {
-        cb.reportFailure();
+        cb.reportFailure(*permit);
         throw;
     }
 }

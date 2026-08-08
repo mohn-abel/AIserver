@@ -1,6 +1,8 @@
 #pragma once
 
-#include <atomic>
+#include <cstdint>
+#include <mutex>
+#include <optional>
 #include <string>
 #include "GatewayTypes.h"
 
@@ -17,12 +19,13 @@
 //   通过 CAS 进入 HALF_OPEN。
 //
 // HALF_OPEN:
-//   用原子 fetch_add 限制本轮探活尝试次数。任意一次探活失败会重新 OPEN；
+//   限制本轮探活尝试次数。任意一次探活失败会重新 OPEN；
 //   探活成功达到 successThreshold 后关闭熔断。
 // ---------------------------------------------------------------------------
 class CircuitBreaker {
 public:
     CircuitBreaker() = default;
+    using Permit = std::uint64_t;
 
     void configure(int failureThreshold,
                    long long failureResetTimeoutMs,
@@ -30,14 +33,14 @@ public:
                    int halfOpenMaxCalls,
                    int successThreshold);
 
-    // 请求前调用：返回 true 表示放行。
-    bool allowRequest();
+    // 请求前调用：有返回值表示放行；完成后必须携带 permit 上报一次。
+    std::optional<Permit> allowRequest();
 
     // 请求成功后调用
-    void reportSuccess();
+    void reportSuccess(Permit permit);
 
     // 请求失败后调用
-    void reportFailure();
+    void reportFailure(Permit permit);
 
     // 查询当前状态
     CircuitState state() const;
@@ -49,16 +52,19 @@ public:
 private:
     std::string backendId_;
 
+    mutable std::mutex mutex_;
+
     int       failureThreshold_       = 5;
     long long failureResetTimeoutMs_  = 10000;
     long long recoveryTimeoutMs_      = 30000;
     int       halfOpenMaxCalls_       = 2;
     int       successThreshold_       = 2;
 
-    std::atomic<CircuitState> state_{CircuitState::CLOSED};
-    std::atomic<int>          consecutiveFailures_{0};
-    std::atomic<long long>    openedTimeMs_{0};
-    std::atomic<int>          halfOpenCalls_{0};
-    std::atomic<int>          halfOpenSuccesses_{0};
-    std::atomic<long long>    lastFailureTimeMs_{0};
+    CircuitState state_               = CircuitState::CLOSED;
+    Permit       generation_          = 0;
+    int          consecutiveFailures_ = 0;
+    long long    openedTimeMs_        = 0;
+    int          halfOpenCalls_       = 0;
+    int          halfOpenSuccesses_   = 0;
+    long long    lastFailureTimeMs_   = 0;
 };

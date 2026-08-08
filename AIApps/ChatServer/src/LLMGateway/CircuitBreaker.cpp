@@ -7,110 +7,127 @@ void CircuitBreaker::configure(int failureThreshold,
                                long long recoveryTimeoutMs,
                                int halfOpenMaxCalls,
                                int successThreshold) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
     failureThreshold_ = std::max(1, failureThreshold);
     failureResetTimeoutMs_ = std::max(1LL, failureResetTimeoutMs);
     recoveryTimeoutMs_ = std::max(0LL, recoveryTimeoutMs);
     halfOpenMaxCalls_ = std::max(1, halfOpenMaxCalls);
-    successThreshold_ = std::max(1, successThreshold);
+    successThreshold_ = std::min(std::max(1, successThreshold), halfOpenMaxCalls_);
 
-    state_.store(CircuitState::CLOSED);
-    consecutiveFailures_.store(0);
-    openedTimeMs_.store(0);
-    halfOpenCalls_.store(0);
-    halfOpenSuccesses_.store(0);
-    lastFailureTimeMs_.store(0);
+    state_ = CircuitState::CLOSED;
+    consecutiveFailures_ = 0;
+    openedTimeMs_ = 0;
+    halfOpenCalls_ = 0;
+    halfOpenSuccesses_ = 0;
+    lastFailureTimeMs_ = 0;
+    ++generation_;
 }
 
-bool CircuitBreaker::allowRequest() {
-    auto state = state_.load();
+std::optional<CircuitBreaker::Permit> CircuitBreaker::allowRequest() {
+    std::lock_guard<std::mutex> lock(mutex_);
 
-    if (state == CircuitState::CLOSED) {
-        return true;
+    if (state_ == CircuitState::CLOSED) {
+        return generation_;
     }
 
-    if (state == CircuitState::OPEN) {
+    if (state_ == CircuitState::OPEN) {
         auto now = nowMs();
-        if (now - openedTimeMs_.load() >= recoveryTimeoutMs_) {
-            CircuitState expected = CircuitState::OPEN;
-            if (state_.compare_exchange_strong(expected, CircuitState::HALF_OPEN)) {
-                halfOpenCalls_.store(0);
-                halfOpenSuccesses_.store(0);
-                std::cout << "[CircuitBreaker:" << backendId_
-                          << "] OPEN -> HALF_OPEN" << std::endl;
-            }
-            auto calls = halfOpenCalls_.fetch_add(1);
-            return calls < halfOpenMaxCalls_;
+        if (now - openedTimeMs_ >= recoveryTimeoutMs_) {
+            state_ = CircuitState::HALF_OPEN;
+            ++generation_;
+            halfOpenCalls_ = 0;
+            halfOpenSuccesses_ = 0;
+            std::cout << "[CircuitBreaker:" << backendId_
+                      << "] OPEN -> HALF_OPEN" << std::endl;
+        } else {
+            return std::nullopt;
         }
-        return false;
     }
 
-    if (state == CircuitState::HALF_OPEN) {
-        auto calls = halfOpenCalls_.fetch_add(1);
-        return calls < halfOpenMaxCalls_;
+    if (state_ == CircuitState::HALF_OPEN) {
+        if (halfOpenCalls_ >= halfOpenMaxCalls_) {
+            return std::nullopt;
+        }
+        ++halfOpenCalls_;
+        return generation_;
     }
 
-    return false;
+    return std::nullopt;
 }
 
-void CircuitBreaker::reportSuccess() {
-    auto state = state_.load();
+void CircuitBreaker::reportSuccess(Permit permit) {
+    std::lock_guard<std::mutex> lock(mutex_);
 
-    if (state == CircuitState::CLOSED) {
+    if (permit != generation_) {
+        return;
+    }
+
+    if (state_ == CircuitState::CLOSED) {
         // 成功不立即清零失败计数；只有失败窗口过期后才清零。
         // 这样可以避免 F,F,F,F,S,F 这类交替模式绕过熔断。
         auto now = nowMs();
-        auto lastFailure = lastFailureTimeMs_.load();
+        auto lastFailure = lastFailureTimeMs_;
         if (lastFailure == 0 || now - lastFailure >= failureResetTimeoutMs_) {
-            consecutiveFailures_.store(0);
+            consecutiveFailures_ = 0;
         }
         return;
     }
 
-    if (state == CircuitState::HALF_OPEN) {
-        auto successes = halfOpenSuccesses_.fetch_add(1) + 1;
-        if (successes >= successThreshold_) {
-            state_.store(CircuitState::CLOSED);
-            consecutiveFailures_.store(0);
-            lastFailureTimeMs_.store(0);
-            openedTimeMs_.store(0);
-            halfOpenCalls_.store(0);
-            halfOpenSuccesses_.store(0);
+    if (state_ == CircuitState::HALF_OPEN) {
+        ++halfOpenSuccesses_;
+        if (halfOpenSuccesses_ >= successThreshold_ &&
+            halfOpenSuccesses_ == halfOpenCalls_) {
+            state_ = CircuitState::CLOSED;
+            ++generation_;
+            consecutiveFailures_ = 0;
+            lastFailureTimeMs_ = 0;
+            openedTimeMs_ = 0;
+            halfOpenCalls_ = 0;
+            halfOpenSuccesses_ = 0;
             std::cout << "[CircuitBreaker:" << backendId_
                       << "] HALF_OPEN -> CLOSED (recovered)" << std::endl;
         }
     }
 }
 
-void CircuitBreaker::reportFailure() {
-    auto state = state_.load();
+void CircuitBreaker::reportFailure(Permit permit) {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (permit != generation_) {
+        return;
+    }
+
     auto now = nowMs();
 
-    if (state == CircuitState::HALF_OPEN) {
-        openedTimeMs_.store(now);
-        halfOpenCalls_.store(0);
-        halfOpenSuccesses_.store(0);
-        state_.store(CircuitState::OPEN);
+    if (state_ == CircuitState::HALF_OPEN) {
+        openedTimeMs_ = now;
+        halfOpenCalls_ = 0;
+        halfOpenSuccesses_ = 0;
+        state_ = CircuitState::OPEN;
+        ++generation_;
         std::cout << "[CircuitBreaker:" << backendId_
                   << "] HALF_OPEN probe failed -> OPEN" << std::endl;
         return;
     }
 
-    if (state != CircuitState::CLOSED) {
+    if (state_ != CircuitState::CLOSED) {
         return;
     }
 
-    auto lastFailure = lastFailureTimeMs_.load();
+    auto lastFailure = lastFailureTimeMs_;
     if (lastFailure > 0 && now - lastFailure >= failureResetTimeoutMs_) {
-        consecutiveFailures_.store(0);
+        consecutiveFailures_ = 0;
     }
 
-    lastFailureTimeMs_.store(now);
-    auto failures = consecutiveFailures_.fetch_add(1) + 1;
+    lastFailureTimeMs_ = now;
+    auto failures = ++consecutiveFailures_;
     if (failures >= failureThreshold_) {
-        state_.store(CircuitState::OPEN);
-        openedTimeMs_.store(now);
-        halfOpenCalls_.store(0);
-        halfOpenSuccesses_.store(0);
+        openedTimeMs_ = now;
+        halfOpenCalls_ = 0;
+        halfOpenSuccesses_ = 0;
+        state_ = CircuitState::OPEN;
+        ++generation_;
         std::cout << "[CircuitBreaker:" << backendId_
                   << "] CLOSED -> OPEN (failures=" << failures
                   << ", threshold=" << failureThreshold_ << ")" << std::endl;
@@ -118,5 +135,6 @@ void CircuitBreaker::reportFailure() {
 }
 
 CircuitState CircuitBreaker::state() const {
-    return state_.load();
+    std::lock_guard<std::mutex> lock(mutex_);
+    return state_;
 }

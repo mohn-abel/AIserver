@@ -143,12 +143,18 @@ void test_rate_limiter_concurrent() {
 // CircuitBreaker 测试
 // ============================================================================
 
+CircuitBreaker::Permit requirePermit(CircuitBreaker& cb) {
+    auto permit = cb.allowRequest();
+    assert(permit.has_value());
+    return *permit;
+}
+
 void test_cb_initial_state() {
     TEST("CircuitBreaker initial CLOSED");
     CircuitBreaker cb;
     cb.configure(3, 10000, 10000, 2, 2);
     cb.setBackendId("test");
-    if (cb.allowRequest() != true) { FAIL("should allow in CLOSED state"); return; }
+    if (!cb.allowRequest()) { FAIL("should allow in CLOSED state"); return; }
     OK();
 }
 
@@ -158,11 +164,11 @@ void test_cb_consecutive_failures_open() {
     cb.configure(3, 10000, 10000, 2, 2);
     cb.setBackendId("test");
 
-    cb.reportFailure();
-    cb.reportFailure();
+    cb.reportFailure(requirePermit(cb));
+    cb.reportFailure(requirePermit(cb));
     if (!cb.allowRequest()) { FAIL("should stay CLOSED before failure threshold"); return; }
 
-    cb.reportFailure();
+    cb.reportFailure(requirePermit(cb));
     if (cb.allowRequest()) { FAIL("should be OPEN after reaching failure threshold"); return; }
     OK();
 }
@@ -173,10 +179,10 @@ void test_cb_success_does_not_clear_before_reset_window() {
     cb.configure(3, 10000, 10000, 2, 2);
     cb.setBackendId("test");
 
-    cb.reportFailure();
-    cb.reportFailure();
-    cb.reportSuccess();
-    cb.reportFailure();
+    cb.reportFailure(requirePermit(cb));
+    cb.reportFailure(requirePermit(cb));
+    cb.reportSuccess(requirePermit(cb));
+    cb.reportFailure(requirePermit(cb));
 
     if (cb.allowRequest()) { FAIL("should open because success before reset window does not clear failures"); return; }
     OK();
@@ -188,11 +194,11 @@ void test_cb_failure_counter_expires_after_reset_window() {
     cb.configure(3, 30, 10000, 2, 2);
     cb.setBackendId("test");
 
-    cb.reportFailure();
-    cb.reportFailure();
+    cb.reportFailure(requirePermit(cb));
+    cb.reportFailure(requirePermit(cb));
     std::this_thread::sleep_for(std::chrono::milliseconds(40));
-    cb.reportSuccess();
-    cb.reportFailure();
+    cb.reportSuccess(requirePermit(cb));
+    cb.reportFailure(requirePermit(cb));
 
     if (!cb.allowRequest()) { FAIL("should remain CLOSED because old failures expired"); return; }
     OK();
@@ -204,16 +210,18 @@ void test_cb_half_open_and_recover() {
     cb.configure(2, 10000, 50, 2, 2);
     cb.setBackendId("test");
 
-    cb.reportFailure();
-    cb.reportFailure();
+    cb.reportFailure(requirePermit(cb));
+    cb.reportFailure(requirePermit(cb));
     if (cb.allowRequest()) { FAIL("should be OPEN after failure threshold"); return; }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
 
-    if (!cb.allowRequest()) { FAIL("should allow first HALF_OPEN probe after timeout"); return; }
-    cb.reportSuccess();
-    if (!cb.allowRequest()) { FAIL("should allow second HALF_OPEN probe"); return; }
-    cb.reportSuccess();
+    auto firstProbe = cb.allowRequest();
+    if (!firstProbe) { FAIL("should allow first HALF_OPEN probe after timeout"); return; }
+    cb.reportSuccess(*firstProbe);
+    auto secondProbe = cb.allowRequest();
+    if (!secondProbe) { FAIL("should allow second HALF_OPEN probe"); return; }
+    cb.reportSuccess(*secondProbe);
 
     if (cb.state() != CircuitState::CLOSED) { FAIL("should be CLOSED after successful probes"); return; }
     if (!cb.allowRequest()) { FAIL("should allow normal request after recovery"); return; }
@@ -226,8 +234,8 @@ void test_cb_half_open_call_limit() {
     cb.configure(2, 10000, 50, 2, 3);
     cb.setBackendId("test");
 
-    cb.reportFailure();
-    cb.reportFailure();
+    cb.reportFailure(requirePermit(cb));
+    cb.reportFailure(requirePermit(cb));
     if (cb.allowRequest()) { FAIL("should be OPEN after failure threshold"); return; }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
@@ -244,14 +252,15 @@ void test_cb_half_open_fail_reopens() {
     cb.configure(2, 10000, 50, 2, 2);
     cb.setBackendId("test");
 
-    cb.reportFailure();
-    cb.reportFailure();
+    cb.reportFailure(requirePermit(cb));
+    cb.reportFailure(requirePermit(cb));
     if (cb.allowRequest()) { FAIL("should be OPEN before recovery timeout"); return; }
 
     std::this_thread::sleep_for(std::chrono::milliseconds(60));
 
-    if (!cb.allowRequest()) { FAIL("should enter HALF_OPEN"); return; }
-    cb.reportFailure();
+    auto probe = cb.allowRequest();
+    if (!probe) { FAIL("should enter HALF_OPEN"); return; }
+    cb.reportFailure(*probe);
 
     if (cb.allowRequest()) { FAIL("should be back to OPEN after probe failure"); return; }
     OK();
@@ -265,10 +274,150 @@ void test_cb_independent_instances() {
     cb1.setBackendId("A");
     cb2.setBackendId("B");
 
-    cb1.reportFailure();
-    cb1.reportFailure();
+    cb1.reportFailure(requirePermit(cb1));
+    cb1.reportFailure(requirePermit(cb1));
 
     if (!cb2.allowRequest()) { FAIL("cb2 should be independent of cb1"); return; }
+    OK();
+}
+
+void test_cb_stale_closed_result_does_not_recover_half_open() {
+    TEST("CircuitBreaker stale CLOSED result does not recover HALF_OPEN");
+    CircuitBreaker cb;
+    cb.configure(1, 10000, 0, 1, 1);
+    cb.setBackendId("test");
+
+    auto slowRequest = cb.allowRequest();
+    if (!slowRequest) { FAIL("slow CLOSED request should be allowed"); return; }
+    auto failingRequest = cb.allowRequest();
+    if (!failingRequest) { FAIL("failing CLOSED request should be allowed"); return; }
+    cb.reportFailure(*failingRequest);
+
+    auto probe = cb.allowRequest();
+    if (!probe) { FAIL("HALF_OPEN probe should be allowed"); return; }
+    cb.reportSuccess(*slowRequest);
+
+    if (cb.state() != CircuitState::HALF_OPEN) {
+        FAIL("stale CLOSED success must not close the HALF_OPEN generation");
+        return;
+    }
+    OK();
+}
+
+void test_cb_success_threshold_is_reachable() {
+    TEST("CircuitBreaker success threshold is reachable");
+    CircuitBreaker cb;
+    cb.configure(1, 10000, 0, 2, 3);
+    cb.setBackendId("test");
+
+    auto failingRequest = cb.allowRequest();
+    if (!failingRequest) { FAIL("CLOSED request should be allowed"); return; }
+    cb.reportFailure(*failingRequest);
+    auto firstProbe = cb.allowRequest();
+    if (!firstProbe) { FAIL("first HALF_OPEN probe should be allowed"); return; }
+    cb.reportSuccess(*firstProbe);
+    auto secondProbe = cb.allowRequest();
+    if (!secondProbe) { FAIL("second HALF_OPEN probe should be allowed"); return; }
+    cb.reportSuccess(*secondProbe);
+
+    if (cb.state() != CircuitState::CLOSED) {
+        FAIL("success threshold must not exceed the HALF_OPEN call budget");
+        return;
+    }
+    OK();
+}
+
+void test_cb_concurrent_half_open_failure_wins() {
+    TEST("CircuitBreaker concurrent HALF_OPEN failure wins");
+    CircuitBreaker cb;
+    cb.configure(1, 10000, 0, 2, 1);
+    cb.setBackendId("test");
+
+    cb.reportFailure(requirePermit(cb));
+    auto successfulProbe = cb.allowRequest();
+    auto failingProbe = cb.allowRequest();
+    if (!successfulProbe || !failingProbe) {
+        FAIL("both HALF_OPEN probes should be allowed");
+        return;
+    }
+
+    std::atomic<bool> start{false};
+    std::thread successThread([&]() {
+        while (!start.load()) std::this_thread::yield();
+        cb.reportSuccess(*successfulProbe);
+    });
+    std::thread failureThread([&]() {
+        while (!start.load()) std::this_thread::yield();
+        cb.reportFailure(*failingProbe);
+    });
+
+    start.store(true);
+    successThread.join();
+    failureThread.join();
+
+    if (cb.state() != CircuitState::OPEN) {
+        FAIL("any admitted HALF_OPEN failure must reopen the circuit");
+        return;
+    }
+    OK();
+}
+
+void test_cb_concurrent_half_open_call_limit() {
+    TEST("CircuitBreaker concurrent HALF_OPEN call limit");
+    CircuitBreaker cb;
+    cb.configure(1, 10000, 0, 2, 2);
+    cb.setBackendId("test");
+    cb.reportFailure(requirePermit(cb));
+
+    std::atomic<bool> start{false};
+    std::atomic<int> allowed{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 32; ++i) {
+        threads.emplace_back([&]() {
+            while (!start.load()) std::this_thread::yield();
+            if (cb.allowRequest()) ++allowed;
+        });
+    }
+
+    start.store(true);
+    for (auto& thread : threads) thread.join();
+
+    if (allowed.load() != 2) {
+        FAIL("concurrent probes must not exceed halfOpenMaxCalls");
+        return;
+    }
+    OK();
+}
+
+void test_cb_concurrent_closed_failures_open() {
+    TEST("CircuitBreaker concurrent CLOSED failures open");
+    CircuitBreaker cb;
+    constexpr int failureCount = 32;
+    cb.configure(failureCount, 10000, 10000, 2, 2);
+    cb.setBackendId("test");
+
+    std::vector<CircuitBreaker::Permit> permits;
+    permits.reserve(failureCount);
+    for (int i = 0; i < failureCount; ++i) {
+        permits.push_back(requirePermit(cb));
+    }
+
+    std::atomic<bool> start{false};
+    std::vector<std::thread> threads;
+    for (auto permit : permits) {
+        threads.emplace_back([&, permit]() {
+            while (!start.load()) std::this_thread::yield();
+            cb.reportFailure(permit);
+        });
+    }
+
+    start.store(true);
+    for (auto& thread : threads) thread.join();
+
+    if (cb.state() != CircuitState::OPEN) {
+        FAIL("concurrent failures reaching the threshold must open the circuit");
+        return;
+    }
     OK();
 }
 
@@ -294,6 +443,11 @@ int main() {
     test_cb_half_open_call_limit();
     test_cb_half_open_fail_reopens();
     test_cb_independent_instances();
+    test_cb_stale_closed_result_does_not_recover_half_open();
+    test_cb_success_threshold_is_reachable();
+    test_cb_concurrent_half_open_failure_wins();
+    test_cb_concurrent_half_open_call_limit();
+    test_cb_concurrent_closed_failures_open();
 
     std::cout << std::endl
               << "=== Results: " << passed << " passed, "

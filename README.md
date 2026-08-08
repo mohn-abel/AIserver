@@ -415,7 +415,7 @@ wrk -t4 -c100 -d30s -s login.lua http://127.0.0.1:8080/login
 ## 项目总结
 
 - 基于开源项目 [Kama-HTTPServer](https://github.com/youngyangyang04/Kama-HTTPServer) / [CppAIService](https://github.com/youngyangyang04/CppAIService) 重构而来
-- HttpServer 框架基于 Muduo Reactor 多线程模型，单机 QPS 可达 **6 万+**
+- HttpServer 框架基于 Muduo Reactor 多线程模型，单机 QPS 可达 **12 万+**
 - 重构 AI 模型系统：从硬编码策略 → 配置驱动 `GenericAIStrategy`，新增 DeepSeek 模型支持
 - 新增 `LLMGateway`：两级限流、固定时间窗口失败率熔断、超时、非流式 fallback、流式 SSE 转发
 - 新增 `ThreadPool` 通用线程池模块，配合 deferred response 和 SSE 实现业务逻辑与网络 I/O 解耦
