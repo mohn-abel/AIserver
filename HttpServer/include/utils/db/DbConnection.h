@@ -149,7 +149,7 @@ namespace http
             void reconnectInternal();
 
         private:
-            std::shared_ptr<sql::Connection> conn_;
+            std::unique_ptr<sql::Connection> conn_;
             std::string                      host_;
             std::string                      user_;
             std::string                      password_;

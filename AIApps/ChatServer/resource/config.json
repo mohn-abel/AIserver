@@ -4,7 +4,11 @@
     {
       "name": "get_weather",
       "params": {
-        "city": "北京"
+        "city": {
+          "type": "string",
+          "required": true,
+          "description": "要查询的城市名称，例如北京"
+        }
       },
       "desc": "获取天气"
     },

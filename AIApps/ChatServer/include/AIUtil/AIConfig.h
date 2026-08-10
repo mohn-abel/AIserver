@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#include <optional>
 #include "../../../../HttpServer/include/utils/JsonUtil.h"  // 假设封装了 nlohmann::json
 
 // 该文件定义了 AI 配置管理相关的结构体和类，
@@ -14,7 +15,12 @@
 // 结构体：单个工具信息
 struct AITool {
     std::string name;  // 工具名称
-    std::unordered_map<std::string, std::string> params;  // 工具参数映射（参数名 -> 参数描述）
+    struct Param {
+        std::string type;
+        bool required = false;
+        std::string description;
+    };
+    std::unordered_map<std::string, Param> params;
     std::string desc;  // 工具描述
 };
 // 结构体：AI 响应中工具调用结果
@@ -23,6 +29,19 @@ struct AIToolCall {
     json args = json::object(); // 工具调用参数（JSON 格式）
     bool isToolCall = false;    // 标志是否需要工具调用
     std::string rawResponse;    // 路由 LLM 的原始响应文本（调试用）
+};
+
+enum class ToolCallParseStatus {
+    kValidToolCall,
+    kNoToolCall,
+    kInvalid
+};
+
+// 保留解析状态与失败原因，调用方据此决定是否重试或降级。
+struct ToolCallParseResult {
+    ToolCallParseStatus status = ToolCallParseStatus::kInvalid;
+    AIToolCall call;
+    std::string error;
 };
 
 // 配置管理类：负责加载配置、构建提示和解析响应
@@ -43,6 +62,12 @@ public:
     // 返回: 解析出的工具调用结构体
     AIToolCall parseAIResponse(const std::string& response) const;
 
+    // 从非原生 function-calling 的模型输出中提取、规范化并校验工具调用。
+    ToolCallParseResult parseAndValidateToolCall(const std::string& response) const;
+
+    // 构建一次性格式纠正提示，不允许模型重新选择或执行工具。
+    std::string buildToolCallRepairPrompt(const std::string& rawResponse) const;
+
     // 构建包含工具执行结果的提示，用于继续对话
     // 参数 userInput: 原始用户输入
     // 参数 toolName: 执行的工具名称
@@ -61,4 +86,9 @@ private:
     // 私有方法：根据工具列表构建工具描述字符串
     // 返回: 格式化的工具列表文本
     std::string buildToolList() const;
+
+    std::optional<json> extractJsonObject(const std::string& response) const;
+    const AITool* findTool(const std::string& name) const;
+    bool validateArgs(const AITool& tool, const json& args, std::string& error) const;
+    static bool matchesType(const json& value, const std::string& type);
 };

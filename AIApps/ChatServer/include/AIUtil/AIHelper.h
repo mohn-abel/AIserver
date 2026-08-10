@@ -58,10 +58,15 @@ private:
     void prepareStrategy(const std::string& modelType);
 
     // 工具路由：构造路由 prompt，执行非流式 LLM 调用，解析工具决策
-    AIToolCall routeToolCall(int userId,
-                             const std::string& userQuestion,
-                             const std::string& modelType,
-                             AIConfig& config);
+    ToolCallParseResult routeToolCall(int userId,
+                                      const std::string& userQuestion,
+                                      const std::string& modelType,
+                                      AIConfig& config);
+
+    ToolCallParseResult executeToolRoutePrompt(int userId,
+                                                const std::string& prompt,
+                                                const std::string& modelType,
+                                                AIConfig& config);
 
     // 流式最终回答：基于当前 messages 构造请求，调用网关流式接口
     void completeStreaming(int userId,

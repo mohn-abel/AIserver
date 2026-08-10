@@ -45,29 +45,48 @@ void AIHelper::prepareStrategy(const std::string& modelType) {
               << " url=" << strategy->getApiUrl() << std::endl;
 }
 
-// 工具路由：构造路由 prompt，执行非流式 LLM 调用，解析工具决策
-AIToolCall AIHelper::routeToolCall(int userId,
-                                   const std::string& userQuestion,
-                                   const std::string& modelType,
-                                   AIConfig& config) {
-    std::string routePrompt = config.buildPrompt(userQuestion);
+// 执行一次非流式工具路由请求；临时 prompt 不会进入持久化会话。
+ToolCallParseResult AIHelper::executeToolRoutePrompt(int userId,
+                                                      const std::string& prompt,
+                                                      const std::string& modelType,
+                                                      AIConfig& config) {
     std::cout << "[AIHelper::routeToolCall] routePrompt preview="
-              << routePrompt.substr(0, 120) << std::endl;
-
-    messages.push_back({routePrompt, 0});
+              << prompt.substr(0, 120) << std::endl;
+    messages.push_back({prompt, 0});
 
     try {
-        json firstReq = buildRequestWithContext();
-        json firstResp = executeCurl(firstReq, userId, modelType);
-        std::string routeResult = strategy->parseResponse(firstResp);
+        json request = buildRequestWithContext();
+        json response = executeCurl(request, userId, modelType);
+        std::string rawResult = strategy->parseResponse(response);
         messages.pop_back();
 
-        std::cout << "[AIHelper::routeToolCall] routeResult=" << routeResult << std::endl;
-        return config.parseAIResponse(routeResult);
+        std::cout << "[AIHelper::routeToolCall] routeResult=" << rawResult << std::endl;
+        return config.parseAndValidateToolCall(rawResult);
     } catch (...) {
         messages.pop_back();
         throw;
     }
+}
+
+// 工具路由：首次解析无效时，只进行一次格式纠正请求。
+ToolCallParseResult AIHelper::routeToolCall(int userId,
+                                             const std::string& userQuestion,
+                                             const std::string& modelType,
+                                             AIConfig& config) {
+    ToolCallParseResult first = executeToolRoutePrompt(
+        userId, config.buildPrompt(userQuestion), modelType, config);
+    if (first.status != ToolCallParseStatus::kInvalid) {
+        return first;
+    }
+
+    std::cerr << "[AIHelper::routeToolCall] invalid tool JSON, retrying repair: "
+              << first.error << std::endl;
+    ToolCallParseResult repaired = executeToolRoutePrompt(
+        userId, config.buildToolCallRepairPrompt(first.call.rawResponse), modelType, config);
+    if (repaired.status == ToolCallParseStatus::kInvalid) {
+        repaired.error = "首次解析失败: " + first.error + "; 格式纠正失败: " + repaired.error;
+    }
+    return repaired;
 }
 
 // 流式最终回答：基于当前 messages 构造请求，调用网关流式接口
@@ -128,9 +147,9 @@ void AIHelper::chat(int userId,
     }
 
     // 第一次调用：工具路由（非流式）
-    AIToolCall call;
+    ToolCallParseResult routeResult;
     try {
-        call = routeToolCall(userId, userQuestion, modelType, config);
+        routeResult = routeToolCall(userId, userQuestion, modelType, config);
     } catch (const std::exception& e) {
         std::string err = "[路由调用失败] " + std::string(e.what());
         std::cerr << "[AIHelper] " << err << std::endl;
@@ -140,13 +159,30 @@ void AIHelper::chat(int userId,
         return;
     }
 
+    AIToolCall call;
+    if (routeResult.status == ToolCallParseStatus::kInvalid) {
+        // 格式纠正仍失败时，不执行工具，按普通对话路径继续。
+        std::cerr << "[AIHelper] Tool route rejected; falling back without tool: "
+                  << routeResult.error << std::endl;
+        call.rawResponse = routeResult.call.rawResponse;
+    } else {
+        call = std::move(routeResult.call);
+    }
+
     // 执行工具调用（如果需要）
     json toolResult;
     if (call.isToolCall) {
         AIToolRegistry registry;
+        if (!registry.hasTool(call.toolName)) {
+            // 配置与注册表不一致时，拒绝执行并降级为普通回答。
+            std::cerr << "[AIHelper] Tool is not registered: " << call.toolName << std::endl;
+            call.isToolCall = false;
+        }
         try {
-            toolResult = registry.invoke(call.toolName, call.args);
-            std::cout << "[AIHelper] Tool call success: " << call.toolName << std::endl;
+            if (call.isToolCall) {
+                toolResult = registry.invoke(call.toolName, call.args);
+                std::cout << "[AIHelper] Tool call success: " << call.toolName << std::endl;
+            }
         } catch (const std::exception& e) {
             std::string err = "[工具调用失败] " + std::string(e.what());
             std::cerr << "[AIHelper] " << err << std::endl;
