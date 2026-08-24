@@ -384,7 +384,7 @@ wrk -t4 -c200 -d30s http://127.0.0.1:8080/entry
 | 平均延迟 | 1.69 ms |
 | 吞吐 | 1.09 GB/s |
 
-### 场景二：动态路由 + Session 鉴权
+### 场景二：静态路由 + Session 鉴权
 
 ```bash
 wrk -t4 -c200 -d30s -H "Cookie: sessionId=<yourSessionId>" http://127.0.0.1:8080/menu
