@@ -8,18 +8,17 @@
 
 ## 与原项目的差异
 
-> 原项目 Kama-HTTPServer 是[代码随想录知识星球](https://programmercarl.com/other/kstar.html)的教学项目，包含自研 HTTP 框架、五子棋游戏服务（GomokuServer）和 AI 聊天服务（ChatServer）。
+> 原项目 Kama-HTTPServer 教学项目，包含自研 HTTP 框架与 AI 聊天服务（ChatServer）。
 
 本项目在原项目基础上进行了以下重构：
 
 | 类别 | 改动 |
 |------|------|
-| **结构清理** | 移除 `WebApps/GomokuServer` 五子棋游戏应用，聚焦 AI 聊天场景 |
 | **新增线程池** | 新增 `HttpServer/include/utils/ThreadPool` 通用线程池模块，支持异步任务提交 |
 | **异步流式响应** | 聊天接口统一改为 SSE 流式输出，LLM 阻塞调用从 I/O 线程转移到业务线程池 |
 | **AI 模型重构** | 原项目硬编码 4 个独立策略类（AliyunStrategy / DouBaoStrategy / AliyunRAGStrategy / AliyunMcpStrategy），重构为 `GenericAIStrategy`（OpenAI 兼容接口）+ 配置驱动模式 |
 | **模型配置化** | 新增 `model_config.json` 运行时配置，支持动态注册模型和别名，新增 DeepSeek 模型 |
-| **LLM 网关治理** | 新增 `LLMGateway`，统一处理限流、固定时间窗口失败率熔断、超时、非流式 fallback 和流式 SSE 转发 |
+| **LLM 网关治理** | 新增 `LLMGateway`，统一处理限流、连续失败阈值与时间衰减窗口熔断、超时、非流式 fallback 和流式 SSE 转发 |
 | **框架修复** | 优化 Session 管理、HttpResponse 异步响应、MysqlUtil 封装、DbConnection 连接池等核心模块 |
 | **工程化** | 添加 `.gitignore`、压力测试脚本 `login.lua`、批量注册脚本 `create_users.sh` |
 
@@ -128,7 +127,7 @@ AIserver/
 |------|------|
 | **多模型对话** | 支持阿里云通义千问、DeepSeek 等 OpenAI 兼容 API，运行时切换 |
 | **SSE 流式回复** | `/chat/send` 和 `/chat/send-new-session` 统一通过 SSE 推送 OpenAI 风格 chunk，最终以 `[DONE]` 结束 |
-| **LLM 网关治理** | 每用户/每后端限流，固定时间窗口失败率熔断，超时控制，非流式 fallback 降级 |
+| **LLM 网关治理** | 每用户/每后端限流，连续失败阈值与时间衰减窗口熔断，超时控制，非流式 fallback 降级 |
 | **RAG 检索增强** | 结合阿里云 DashScope 知识库进行增强生成，RAG 流式响应由策略层适配 |
 | **MCP 工具调用** | AI 可自主调用天气查询、时间查询等工具（工具路由 + 工具执行 + 流式最终回答） |
 | **多轮对话** | 维护每用户每会话的对话历史，支持跨轮次上下文记忆和上下文窗口裁剪 |
@@ -262,7 +261,7 @@ cd build-release && ./http_server -p 8080   # 指定端口
 ### 配置
 
 - **AI 模型**：复制 `AIApps/ChatServer/resource/model_config.example.json` 为 `model_config.json`，配置 API Key 和端点
-- **LLM 网关**：复制 `AIApps/ChatServer/resource/gateway_config.example.json` 为 `gateway_config.json`，配置后端、限流、固定窗口熔断、超时和 fallback 路由
+- **LLM 网关**：复制 `AIApps/ChatServer/resource/gateway_config.example.json` 为 `gateway_config.json`，配置后端、限流、连续失败阈值熔断、超时和 fallback 路由
 - **MCP 工具**：编辑 `AIApps/ChatServer/resource/config.json`
 - **百度语音**：设置环境变量 `BAIDU_CLIENT_ID` / `BAIDU_CLIENT_SECRET`
 - **数据库**：确保 MySQL 中存在 `ChatHttpServer` 数据库及 `users`、`chat_message` 表
@@ -353,7 +352,7 @@ g++ -std=c++17 -pthread \
 /tmp/test_gateway_current
 ```
 
-覆盖 TokenBucket、两级 RateLimiter、固定时间窗口失败率 CircuitBreaker、`min_requests`、窗口轮转、HALF_OPEN 恢复和并发访问。
+覆盖 TokenBucket、两级 RateLimiter、连续失败阈值与时间衰减窗口 CircuitBreaker、HALF_OPEN 恢复、并发半开名额限制、旧代 permit 忽略和并发状态转换。
 
 ### 网关集成测试
 
@@ -417,7 +416,7 @@ wrk -t4 -c100 -d30s -s login.lua http://127.0.0.1:8080/login
 - 基于开源项目 [Kama-HTTPServer](https://github.com/youngyangyang04/Kama-HTTPServer) / [CppAIService](https://github.com/youngyangyang04/CppAIService) 重构而来
 - HttpServer 框架基于 Muduo Reactor 多线程模型，单机 QPS 可达 **12 万+**
 - 重构 AI 模型系统：从硬编码策略 → 配置驱动 `GenericAIStrategy`，新增 DeepSeek 模型支持
-- 新增 `LLMGateway`：两级限流、固定时间窗口失败率熔断、超时、非流式 fallback、流式 SSE 转发
+- 新增 `LLMGateway`：两级限流、连续失败阈值与时间衰减窗口熔断、超时、非流式 fallback、流式 SSE 转发
 - 新增 `ThreadPool` 通用线程池模块，配合 deferred response 和 SSE 实现业务逻辑与网络 I/O 解耦
 - 通过 RabbitMQ 消息队列实现消息异步持久化
 - 综合运用策略模式、工厂模式、单例模式、连接池模式等设计模式
