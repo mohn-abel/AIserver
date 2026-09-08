@@ -177,7 +177,6 @@
         <p class="subtitle">选择一个功能开始体验</p>
         <div class="divider"></div>
         <div class="menu-item" id="chat-service">AI 智能聊天</div>
-        <div class="menu-item" id="image-service">AI 图像识别</div>
         <div class="menu-item logout" id="logout">退出登录</div>
     </div>
 
@@ -208,7 +207,6 @@
         }
 
         document.getElementById('chat-service').addEventListener('click',  () => navigate('/chat',   '进入聊天服务失败'));
-        document.getElementById('image-service').addEventListener('click', () => navigate('/upload', '进入图像识别服务失败'));
 
         document.getElementById('logout').addEventListener('click', async () => {
             const userId = sessionStorage.getItem('userId');
